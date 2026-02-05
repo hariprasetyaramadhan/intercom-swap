@@ -129,6 +129,15 @@ class Sidechannel extends Feature {
       }
     }
     this.welcomedChannels = new Set();
+    const selfKey = normalizeKeyHex(this.peer?.wallet?.publicKey);
+    if (selfKey) {
+      for (const [channel, key] of this.ownerKeys.entries()) {
+        if (key === selfKey) this._rememberWelcome(channel);
+      }
+      if (this.defaultOwnerKey && this.defaultOwnerKey === selfKey && this.entryChannel) {
+        this._rememberWelcome(this.entryChannel);
+      }
+    }
 
     const initial = Array.isArray(config.channels) ? config.channels : [];
     for (const name of initial) this._registerChannel(name);

@@ -2,6 +2,7 @@ import {Protocol} from "trac-peer";
 import { bufferToBigInt, bigIntToDecimalString } from "trac-msb/src/utils/amountSerialization.js";
 import b4a from "b4a";
 import PeerWallet from "trac-wallet";
+import fs from "fs";
 
 const stableStringify = (value) => {
     if (value === null || value === undefined) return 'null';
@@ -40,6 +41,13 @@ const parseInviteArg = (raw) => {
     if (!raw) return null;
     let text = String(raw || '').trim();
     if (!text) return null;
+    if (text.startsWith('@')) {
+        try {
+            text = fs.readFileSync(text.slice(1), 'utf8').trim();
+        } catch (_e) {
+            return null;
+        }
+    }
     if (text.startsWith('b64:')) text = text.slice(4);
     if (text.startsWith('{')) {
         try {
@@ -57,6 +65,13 @@ const parseWelcomeArg = (raw) => {
     if (!raw) return null;
     let text = String(raw || '').trim();
     if (!text) return null;
+    if (text.startsWith('@')) {
+        try {
+            text = fs.readFileSync(text.slice(1), 'utf8').trim();
+        } catch (_e) {
+            return null;
+        }
+    }
     if (text.startsWith('b64:')) text = text.slice(4);
     if (text.startsWith('{')) {
         try {
@@ -204,9 +219,9 @@ class SampleProtocol extends Protocol{
         console.log('- /tx --command "read_chat_last" | prints last chat message captured by contract.');
         console.log('- /tx --command "read_timer" | prints current timer feature value.');
         console.log('- /sc_join --channel "<name>" | join an ephemeral sidechannel (no autobase).');
-        console.log('- /sc_open --channel "<name>" [--via "<channel>"] [--invite <json|b64>] [--welcome <json|b64>] | request others to open a sidechannel.');
-        console.log('- /sc_send --channel "<name>" --message "<text>" [--invite <json|b64>] | send message over sidechannel.');
-        console.log('- /sc_invite --channel "<name>" --pubkey "<peer-pubkey-hex>" [--ttl <sec>] [--welcome <json|b64>] | create a signed invite.');
+        console.log('- /sc_open --channel "<name>" [--via "<channel>"] [--invite <json|b64|@file>] [--welcome <json|b64|@file>] | request others to open a sidechannel.');
+        console.log('- /sc_send --channel "<name>" --message "<text>" [--invite <json|b64|@file>] | send message over sidechannel.');
+        console.log('- /sc_invite --channel "<name>" --pubkey "<peer-pubkey-hex>" [--ttl <sec>] [--welcome <json|b64|@file>] | create a signed invite.');
         console.log('- /sc_welcome --channel "<name>" --text "<message>" | create a signed welcome.');
         console.log('- /sc_stats | show sidechannel channels + connection count.');
         // further protocol specific options go here
@@ -279,7 +294,7 @@ class SampleProtocol extends Protocol{
             const message = args.message || args.msg;
             const inviteArg = args.invite || args.invite_b64 || args.invitebase64;
             if (!name || message === undefined) {
-                console.log('Usage: /sc_send --channel "<name>" --message "<text>" [--invite <json|b64>]');
+                console.log('Usage: /sc_send --channel "<name>" --message "<text>" [--invite <json|b64|@file>]');
                 return;
             }
             if (!this.peer.sidechannel) {
@@ -290,7 +305,7 @@ class SampleProtocol extends Protocol{
             if (inviteArg) {
                 invite = parseInviteArg(inviteArg);
                 if (!invite) {
-                    console.log('Invalid invite. Pass JSON or base64.');
+                    console.log('Invalid invite. Pass JSON, base64, or @file.');
                     return;
                 }
             }
@@ -305,7 +320,7 @@ class SampleProtocol extends Protocol{
             const inviteArg = args.invite || args.invite_b64 || args.invitebase64;
             const welcomeArg = args.welcome || args.welcome_b64 || args.welcomebase64;
             if (!name) {
-                console.log('Usage: /sc_open --channel "<name>" [--via "<channel>"] [--invite <json|b64>] [--welcome <json|b64>]');
+                console.log('Usage: /sc_open --channel "<name>" [--via "<channel>"] [--invite <json|b64|@file>] [--welcome <json|b64|@file>]');
                 return;
             }
             if (!this.peer.sidechannel) {
@@ -316,7 +331,7 @@ class SampleProtocol extends Protocol{
             if (inviteArg) {
                 invite = parseInviteArg(inviteArg);
                 if (!invite) {
-                    console.log('Invalid invite. Pass JSON or base64.');
+                    console.log('Invalid invite. Pass JSON, base64, or @file.');
                     return;
                 }
             }
@@ -324,7 +339,7 @@ class SampleProtocol extends Protocol{
             if (welcomeArg) {
                 welcome = parseWelcomeArg(welcomeArg);
                 if (!welcome) {
-                    console.log('Invalid welcome. Pass JSON or base64.');
+                    console.log('Invalid welcome. Pass JSON, base64, or @file.');
                     return;
                 }
             } else if (typeof this.peer.sidechannel.getWelcome === 'function') {
@@ -346,7 +361,7 @@ class SampleProtocol extends Protocol{
             const ttlRaw = args.ttl || args.ttl_sec || args.ttl_s;
             const welcomeArg = args.welcome || args.welcome_b64 || args.welcomebase64;
             if (!channel || !invitee) {
-                console.log('Usage: /sc_invite --channel "<name>" --pubkey "<peer-pubkey-hex>" [--ttl <sec>] [--welcome <json|b64>]');
+                console.log('Usage: /sc_invite --channel "<name>" --pubkey "<peer-pubkey-hex>" [--ttl <sec>] [--welcome <json|b64|@file>]');
                 return;
             }
             if (!this.peer.sidechannel) {
@@ -428,7 +443,7 @@ class SampleProtocol extends Protocol{
             if (welcomeArg) {
                 welcome = parseWelcomeArg(welcomeArg);
                 if (!welcome) {
-                    console.log('Invalid welcome. Pass JSON or base64.');
+                    console.log('Invalid welcome. Pass JSON, base64, or @file.');
                     return;
                 }
             } else if (typeof this.peer.sidechannel.getWelcome === 'function') {
