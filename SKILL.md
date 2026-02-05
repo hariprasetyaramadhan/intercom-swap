@@ -151,6 +151,7 @@ git clone https://github.com/Trac-Systems/intercom ./intercom
 cd intercom/trac/contract-test-latest
 npm install
 ```
+All paths below assume you are working from **`intercom/trac/contract-test-latest`** (relative to the cloned repo).
 
 ### Core Updates (npm + Pear)
 Use this for dependency refreshes and runtime updates only. **Do not change repo pins** unless explicitly instructed.
@@ -159,7 +160,7 @@ Questions to ask first:
 - Updating **npm deps**, **Pear runtime**, or **both**?
 - Any peers running that must be stopped?
 
-Commands (run in `trac/contract-test-latest`):
+Commands (run in `intercom/trac/contract-test-latest`):
 ```bash
 # ensure Node 22
 node -v
