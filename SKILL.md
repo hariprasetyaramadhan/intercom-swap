@@ -1,6 +1,6 @@
 ---
 name: intercom
-description: Skill for autonomous agents. Secure & private P2P messaging (sidechannels), sparse state/data + contracts, and optional value transfer. For a true agentic internet.
+description: Skill for autonomous agents. Secure & private P2P messaging (sidechannels) with SC-Bridge, sparse state/data + contracts (optional), and optional value transfer. This fork also contains an off-contract BTC(LN) <> USDT(Solana) escrow swap harness with unattended e2e tests.
 ---
 
 # Intercom
@@ -240,6 +240,7 @@ Core:
 - `--msb-store-name <name>` : local MSB state label.
 - `--subnet-channel <name>` : subnet/app identity.
 - `--subnet-bootstrap <hex>` : admin **Peer Writer** key for joiners.
+- `--msb 0|1` (or `--enable-msb 0|1`) : enable/disable MSB networking (**default: 1**). Use `0` for sidechannel-only mode and unattended e2e tests.
 
 Sidechannels:
 - `--sidechannels a,b,c` (or `--sidechannel a,b,c`) : extra sidechannels to join at startup.
@@ -642,6 +643,44 @@ This file is the **wallet identity** (keys + mnemonic). If you want multiple app
 ## Privacy and Output Constraints
 - Do **not** output internal file paths or environment‑specific details.
 - Treat keys and secrets as sensitive.
+
+## Swap Dev (BTC(LN) <> USDT(Solana), Off-Contract)
+This repo contains a **local-only, unattended e2e harness** for a near-atomic swap using:
+- **Lightning (BTC)**: standard invoices (no hodl invoices).
+- **Solana (USDT-like SPL token)**: escrow keyed by the LN `payment_hash`.
+- **Intercom sidechannels**: negotiation + signed messages in an invite-only swap channel.
+
+Hard rule: **no escrow verified, no LN payment sent**. If escrow is unavailable, cancel the trade (do not downgrade to sequential settlement).
+
+### Repo Hygiene (Mandatory)
+- Runtime chain/node artifacts, configs, and secrets MUST live under `onchain/` (gitignored):
+  - solana validator ledgers, bitcoin data dirs, LN credentials (macaroons/certs/rpc sockets), `.env` files, API keys, logs.
+- Intercom peer state lives under `stores/` (gitignored).
+- Never commit secrets or working node data to tracked folders.
+
+### Local Unattended E2E (Recommended)
+Prereqs:
+- Node 22.x + Pear runtime (see above).
+- Docker (for the LN regtest stack).
+- Rust toolchain + Solana CLI (for `cargo build-sbf` and `solana-test-validator`).
+
+Run:
+```bash
+npm test
+npm run test:e2e
+```
+
+What `npm run test:e2e` does:
+- Starts LN regtest via `dev/ln-regtest/docker-compose.yml` (bitcoind + CLN alice/bob).
+- Builds + loads the Solana escrow program into a local `solana-test-validator`.
+- Spawns 3 Intercom peers via Pear:
+  - `alice`: service/escrow depositor + LN invoice receiver (channel owner).
+  - `bob`: client/LN payer + escrow claimer (has an invite).
+  - `eve`: uninvited peer that joins the swap topic; must receive **zero** swap messages (confidentiality regression test).
+
+### Production Notes (Not Implemented Here Yet)
+- Lightning mainnet/testnet: run your own CLN/LND and connect via RPC credentials stored under `onchain/`.
+- Solana mainnet: prefer an RPC provider; self-hosting Solana RPC is operationally heavy and storage-intensive.
 
 ## Notes
 - The skill must always use Pear runtime (never native node).
