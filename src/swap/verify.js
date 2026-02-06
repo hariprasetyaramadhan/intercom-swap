@@ -1,0 +1,75 @@
+import { verifyBolt11MatchesInvoiceBody } from '../ln/bolt11.js';
+
+const normalizeHex = (value) => String(value || '').trim().toLowerCase();
+
+export function verifyInvoiceBody({ invoiceBody }) {
+  if (!invoiceBody || typeof invoiceBody !== 'object') {
+    return { ok: false, error: 'invoiceBody is required', decoded: null };
+  }
+  return verifyBolt11MatchesInvoiceBody({
+    bolt11: invoiceBody.bolt11,
+    payment_hash_hex: invoiceBody.payment_hash_hex,
+    amount_msat: invoiceBody.amount_msat,
+    expires_at_unix: invoiceBody.expires_at_unix,
+  });
+}
+
+export function verifyEscrowAgainstTerms({ terms, escrowBody }) {
+  if (!terms || typeof terms !== 'object') return { ok: false, error: 'terms is required' };
+  if (!escrowBody || typeof escrowBody !== 'object') return { ok: false, error: 'escrowBody is required' };
+
+  if (String(escrowBody.recipient) !== String(terms.sol_recipient)) {
+    return { ok: false, error: 'escrow recipient mismatch vs terms' };
+  }
+  if (String(escrowBody.refund) !== String(terms.sol_refund)) {
+    return { ok: false, error: 'escrow refund mismatch vs terms' };
+  }
+  if (String(escrowBody.mint) !== String(terms.sol_mint)) {
+    return { ok: false, error: 'escrow mint mismatch vs terms' };
+  }
+  if (String(escrowBody.amount) !== String(terms.usdt_amount)) {
+    return { ok: false, error: 'escrow amount mismatch vs terms' };
+  }
+  if (Number(escrowBody.refund_after_unix) < Number(terms.sol_refund_after_unix)) {
+    return { ok: false, error: 'escrow refund_after_unix earlier than terms' };
+  }
+
+  return { ok: true, error: null };
+}
+
+// Payer-side checks before paying the LN invoice.
+// This is intentionally conservative: if any mismatch is detected, the safe action is "do not pay".
+export function verifySwapPrePay({ terms, invoiceBody, escrowBody, now_unix = null }) {
+  if (!terms || typeof terms !== 'object') return { ok: false, error: 'terms is required' };
+  if (!invoiceBody || typeof invoiceBody !== 'object') return { ok: false, error: 'invoiceBody is required' };
+  if (!escrowBody || typeof escrowBody !== 'object') return { ok: false, error: 'escrowBody is required' };
+
+  const inv = verifyInvoiceBody({ invoiceBody });
+  if (!inv.ok) return { ok: false, error: `invoice invalid: ${inv.error}`, decoded_invoice: inv.decoded };
+
+  const escrow = verifyEscrowAgainstTerms({ terms, escrowBody });
+  if (!escrow.ok) return { ok: false, error: escrow.error, decoded_invoice: inv.decoded };
+
+  if (normalizeHex(invoiceBody.payment_hash_hex) !== normalizeHex(escrowBody.payment_hash_hex)) {
+    return { ok: false, error: 'payment_hash mismatch (invoice vs escrow)', decoded_invoice: inv.decoded };
+  }
+
+  if (now_unix !== undefined && now_unix !== null) {
+    const now = Number(now_unix);
+    if (!Number.isFinite(now) || now <= 0) return { ok: false, error: 'now_unix must be a unix seconds number', decoded_invoice: inv.decoded };
+
+    if (invoiceBody.expires_at_unix !== undefined && invoiceBody.expires_at_unix !== null) {
+      if (now >= Number(invoiceBody.expires_at_unix)) {
+        return { ok: false, error: 'invoice already expired', decoded_invoice: inv.decoded };
+      }
+    }
+    if (escrowBody.refund_after_unix !== undefined && escrowBody.refund_after_unix !== null) {
+      if (now >= Number(escrowBody.refund_after_unix)) {
+        return { ok: false, error: 'escrow refund_after already reached', decoded_invoice: inv.decoded };
+      }
+    }
+  }
+
+  return { ok: true, error: null, decoded_invoice: inv.decoded };
+}
+
