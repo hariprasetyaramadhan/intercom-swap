@@ -68,6 +68,7 @@ This repo includes `scripts/swapctl.mjs` (with wrappers `scripts/swapctl.sh` and
 - create owner-signed welcomes + invites (via SC-Bridge signing)
 - send signed swap messages (`rfq`, `quote`, `terms`, `accept`) with schema validation
 - inspect a running peer via SC-Bridge (`info`, `stats`) and watch sidechannel traffic (`watch`)
+- verify swap pre-pay safety checks (offline + optional Solana on-chain validation) (`verify-prepay`)
 
 If a request cannot be fulfilled with a one-liner, create role-specific scripts (service vs client) that fully specify flags, channels, RPC endpoints, and wallet paths.
 
@@ -686,6 +687,10 @@ This repo contains a **local-only, unattended e2e harness** for a near-atomic sw
 - **Intercom sidechannels**: negotiation + signed messages in an invite-only swap channel.
 
 Hard rule: **no escrow verified, no LN payment sent**. If escrow is unavailable, cancel the trade (do not downgrade to sequential settlement).
+
+For operators/agents, use:
+- `scripts/swapctl.sh verify-prepay --terms-json @terms.json --invoice-json @invoice.json --escrow-json @escrow.json --solana-rpc-url <rpc>`  
+  (fails closed: any mismatch -> do not pay).
 
 ### Repo Hygiene (Mandatory)
 - Runtime chain/node artifacts, configs, and secrets MUST live under `onchain/` (gitignored):
