@@ -44,7 +44,7 @@ Local/open-weight models can work too, but use a high-grade one (aim for at leas
 - MiniMax: **MiniMax-M2.1+**
 - Any comparable-or-stronger model is fine
 
-Note: “M2” is a MiniMax model family name; Moonshot Kimi uses the K2/K2.5 naming.
+Note: "M2" is a MiniMax model family name; Moonshot Kimi uses the K2/K2.5 naming.
 
 ---
 
@@ -137,63 +137,74 @@ Notes:
 
 ### SC-Bridge Control (`swapctl`)
 
-`swapctl` is the "tool RPC" interface into a running peer via SC-Bridge.
+`swapctl` is the SC-Bridge client CLI. It controls a **running peer** over WebSocket, and (when needed) asks the peer to sign via SC-Bridge.
 
-Global connection flags (required for `scripts/swapctl.sh ...` / `scripts/swapctl.ps1 ...`):
-| Flag | Meaning |
+#### Connection
+
+| Flag | Required | Meaning |
+|---|---:|---|
+| `--url ws://127.0.0.1:<scPort>` | yes | SC-Bridge websocket URL |
+| `--token <hex>` | yes | SC-Bridge token (from `onchain/sc-bridge/<store>.token`) |
+
+#### Token Convenience Wrapper (Recommended)
+
+| Wrapper | What it does |
 |---|---|
-| `--url ws://127.0.0.1:<scPort>` | SC-Bridge websocket URL |
-| `--token <hex>` | SC-Bridge token (from `onchain/sc-bridge/<store>.token`) |
+| `scripts/swapctl-peer.sh <storeName> <scPort> <swapctl command...>` | Reads `onchain/sc-bridge/<storeName>.token` and calls `swapctl` with `--url/--token` |
+| `scripts/swapctl-peer.ps1 <storeName> <scPort> <swapctl command...>` | Same for Windows |
 
-Token convenience wrapper:
-| Wrapper | Parameters | What it does |
-|---|---|---|
-| `scripts/swapctl-peer.sh <storeName> <scPort> <swapctl command...>` | `storeName`, `scPort`, then any `swapctl` args | Reads token from `onchain/sc-bridge/<storeName>.token` and calls `swapctl` |
+#### Command Reference
 
-Introspection:
-| Function call | What it does | Parameters |
+##### Introspection
+
+| Command | What it does | Important flags |
 |---|---|---|
 | `info` | Peer info (pubkey, joined channels, SC-Bridge status) | none |
 | `stats` | Peer runtime stats | none |
-| `price-get` | Current price snapshot from the price feature | none |
-| `watch` | Stream messages for debugging/observability | Optional: `--channels <a,b,c>`, `--kinds <k1,k2>`, `--trade-id <id>`, `--pretty 0|1`, `--raw 0|1` |
+| `price-get` | Price snapshot from the peer's price feature | none |
+| `watch` | Stream messages for debugging/observability | `--channels <a,b,c>`, `--kinds <k1,k2>`, `--trade-id <id>`, `--pretty 0|1`, `--raw 0|1` |
 
-Sidechannel I/O:
-| Function call | What it does | Parameters |
-|---|---|---|
-| `join` | Join a sidechannel | Required: `--channel <name>`; optional: `--invite <b64|json|@file>`, `--welcome <b64|json|@file>` |
-| `leave` | Leave a sidechannel | Required: `--channel <name>` |
-| `open` | Request others to open a channel (via the entry channel) | Required: `--channel <name>`, `--via <entryChannel>`; optional: `--invite <...>`, `--welcome <...>` |
-| `send` | Send plaintext or JSON to a channel | Required: `--channel <name>` and either `--text <msg>` or `--json <obj|@file>`; optional: `--invite <b64|json|@file>`, `--welcome <b64|json|@file>` |
+##### Sidechannel I/O
 
-Service presence ("directory beacon"):
-| Function call | What it does | Parameters |
+| Command | What it does | Flags |
 |---|---|---|
-| `svc-announce` | Broadcast a signed service announcement | Required: `--channels <a,b,c>`, `--name <label>`; optional: `--pairs <p1,p2>`, `--otc-channels <a,b,c>`, `--note <text>`, `--offers-json <json|@file>`, `--trade-id <id>`, `--ttl-sec <sec>`, `--join 0|1` |
-| `svc-announce-loop` | Periodically re-broadcast announcements (sidechannels have no history) | Required: `--channels <a,b,c>`, `--config <json|@file>`; optional: `--interval-sec <sec>`, `--watch 0|1`, `--ttl-sec <sec>`, `--trade-id <id>`, `--join 0|1` |
+| `join` | Join a sidechannel | `--channel <name>`; optional: `--invite <b64|json|@file>`, `--welcome <b64|json|@file>` |
+| `leave` | Leave a sidechannel | `--channel <name>` |
+| `open` | Request others to open a channel (via the entry channel) | `--channel <name> --via <entryChannel>`; optional: `--invite <...>`, `--welcome <...>` |
+| `send` | Send plaintext or JSON to a channel | `--channel <name>` and one of: `--text <msg>` or `--json <obj|@file>`; optional: `--invite <...>`, `--welcome <...>` |
 
-Invite and welcome helpers (owner-signed):
-| Function call | What it does | Parameters |
-|---|---|---|
-| `make-welcome` | Create a signed welcome payload | Required: `--channel <name>`, `--text <welcomeText>` |
-| `make-invite` | Create a signed invite payload | Required: `--channel <name>`, `--invitee-pubkey <hex32>`; optional: `--ttl-sec <sec>`, `--welcome <b64|json|@file>` |
+##### Service Presence (Directory Beacon)
 
-Swap message helpers (signed swap envelopes):
-| Function call | What it does | Parameters |
+| Command | What it does | Flags |
 |---|---|---|
-| `rfq` | Send RFQ to an OTC channel | Required: `--channel <otcChannel>`, `--trade-id <id>`, `--btc-sats <n>`, `--usdt-amount <atomicStr>`; optional: `--valid-until-unix <sec>` |
-| `quote` | Send quote | Required: `--channel <otcChannel>`, `--trade-id <id>`, `--rfq-id <id>`, `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--valid-until-unix <sec>` |
-| `quote-from-rfq` | Build + send a quote from an RFQ envelope | Required: `--channel <otcChannel>`, `--rfq-json <envelope|@file>`; optional: `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--valid-until-unix <sec>` |
-| `quote-accept` | Accept a quote | Required: `--channel <otcChannel>`, `--quote-json <envelope|@file>` |
-| `swap-invite-from-accept` | Create and send a `swap:<trade_id>` invite after acceptance | Required: `--channel <otcChannel>`, `--accept-json <envelope|@file>`; optional: `--swap-channel <name>`, `--welcome-text <text>`, `--ttl-sec <sec>` |
-| `join-from-swap-invite` | Join a swap channel using a swap-invite envelope | Required: `--swap-invite-json <envelope|@file>` |
-| `terms` | Send swap terms into `swap:<id>` | Required: `--channel <swapChannel>`, `--trade-id <id>`, `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--sol-mint <base58>`, `--sol-recipient <base58>`, `--sol-refund <base58>`, `--sol-refund-after-unix <sec>`, `--ln-receiver-peer <hex32>`, `--ln-payer-peer <hex32>`, `--platform-fee-bps <n>`, `--trade-fee-bps <n>`, `--trade-fee-collector <base58>`; optional: `--platform-fee-collector <base58>`, `--terms-valid-until-unix <sec>` |
-| `accept` | Accept swap terms | Required: `--channel <swapChannel>`, `--trade-id <id>`, and either `--terms-hash <hex>` or `--terms-json <envelope|body|@file>` |
+| `svc-announce` | Broadcast a signed service announcement | Required: `--channels <a,b,c> --name <label>`; optional: `--pairs <p1,p2>`, `--otc-channels <a,b,c>`, `--note <text>`, `--offers-json <json|@file>`, `--trade-id <id>`, `--ttl-sec <sec>`, `--join 0|1` |
+| `svc-announce-loop` | Periodically re-broadcast announcements (sidechannels have no history) | Required: `--channels <a,b,c> --config <json|@file>`; optional: `--interval-sec <sec>`, `--watch 0|1`, `--ttl-sec <sec>`, `--trade-id <id>`, `--join 0|1` |
 
-Pre-pay verification helper:
-| Function call | What it does | Parameters |
+##### Welcome/Invite Helpers (Owner-Signed)
+
+| Command | What it does | Flags |
 |---|---|---|
-| `verify-prepay` | Validate terms/invoice/escrow match, and optionally validate escrow on-chain | Required: `--terms-json <envelope|body|@file>`, `--invoice-json <envelope|body|@file>`, `--escrow-json <envelope|body|@file>`; optional: `--now-unix <sec>`, `--solana-rpc-url <url[,url2,...]>`, `--solana-commitment <confirmed|finalized|processed>` |
+| `make-welcome` | Create a signed welcome payload | `--channel <name> --text <welcomeText>` |
+| `make-invite` | Create a signed invite payload | `--channel <name> --invitee-pubkey <hex32>`; optional: `--ttl-sec <sec>`, `--welcome <b64|json|@file>` |
+
+##### Swap Message Helpers (Signed Envelopes)
+
+| Command | What it does | Flags |
+|---|---|---|
+| `rfq` | Send RFQ to an OTC channel | `--channel <otcChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr>`; optional: `--valid-until-unix <sec>` |
+| `quote` | Send quote | `--channel <otcChannel> --trade-id <id> --rfq-id <id> --btc-sats <n> --usdt-amount <atomicStr> --valid-until-unix <sec>` |
+| `quote-from-rfq` | Build + send a quote from an RFQ envelope | `--channel <otcChannel> --rfq-json <envelope|@file>`; optional: `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--valid-until-unix <sec>` |
+| `quote-accept` | Accept a quote | `--channel <otcChannel> --quote-json <envelope|@file>` |
+| `swap-invite-from-accept` | Create and send a `swap:<trade_id>` invite after acceptance | `--channel <otcChannel> --accept-json <envelope|@file>`; optional: `--swap-channel <name>`, `--welcome-text <text>`, `--ttl-sec <sec>` |
+| `join-from-swap-invite` | Join a swap channel using a swap-invite envelope | `--swap-invite-json <envelope|@file>` |
+| `terms` | Send swap terms into `swap:<id>` | Required: `--channel <swapChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr> --sol-mint <base58> --sol-recipient <base58> --sol-refund <base58> --sol-refund-after-unix <sec> --ln-receiver-peer <hex32> --ln-payer-peer <hex32> --platform-fee-bps <n> --trade-fee-bps <n> --trade-fee-collector <base58>`; optional: `--platform-fee-collector <base58>`, `--terms-valid-until-unix <sec>` |
+| `accept` | Accept swap terms | `--channel <swapChannel> --trade-id <id>` and one of: `--terms-hash <hex>` or `--terms-json <envelope|body|@file>` |
+
+##### Verification
+
+| Command | What it does | Flags |
+|---|---|---|
+| `verify-prepay` | Validate that terms, invoice, and escrow match; optionally validate escrow on-chain | Required: `--terms-json <envelope|body|@file> --invoice-json <envelope|body|@file> --escrow-json <envelope|body|@file>`; optional: `--now-unix <sec>`, `--solana-rpc-url <url[,url2,...]>`, `--solana-commitment <confirmed|finalized|processed>` |
 
 ---
 
@@ -201,17 +212,19 @@ Pre-pay verification helper:
 
 These are long-running bots that sit in an OTC channel and negotiate RFQ/quotes. With `--run-swap 1` they run the full swap state machine inside an invite-only `swap:<trade_id>` channel.
 
-Maker bot wrapper:
-| Function call | What it does | Parameters |
-|---|---|---|
-| `scripts/otc-maker-peer.sh <storeName> <scPort> [...flags]` | Runs the maker OTC bot against a running peer | Reads token from `onchain/sc-bridge/<storeName>.token`; forwards flags to `otc-maker.mjs` |
+#### Wrappers
 
-Taker bot wrapper:
-| Function call | What it does | Parameters |
-|---|---|---|
-| `scripts/otc-taker-peer.sh <storeName> <scPort> [...flags]` | Runs the taker OTC bot against a running peer | Reads token from `onchain/sc-bridge/<storeName>.token`; forwards flags to `otc-taker.mjs` |
+| Wrapper | What it does |
+|---|---|
+| `scripts/otc-maker-peer.sh <storeName> <scPort> [...flags]` | Runs the maker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
+| `scripts/otc-maker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
+| `scripts/otc-taker-peer.sh <storeName> <scPort> [...flags]` | Runs the taker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
+| `scripts/otc-taker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
 
-Maker bot flags (`scripts/otc-maker.mjs`):
+#### `otc-maker` Flags (`scripts/otc-maker.mjs`)
+
+##### General
+
 | Flag | Meaning |
 |---|---|
 | `--otc-channel <name>` | OTC rendezvous channel (default `0000intercomswapbtcusdt`) |
@@ -219,17 +232,33 @@ Maker bot flags (`scripts/otc-maker.mjs`):
 | `--quote-valid-sec <n>` | Quote validity window (default `60`) |
 | `--invite-ttl-sec <n>` | Invite TTL (default `604800`) |
 | `--once 0|1` | Exit after one completed swap (default `0`) |
+| `--once-exit-delay-ms <n>` | Delay before exiting when `--once 1` (default `750`) |
 | `--debug 0|1` | Verbose logs (default `0`) |
 | `--receipts-db <path>` | Receipts DB path (recommended: `onchain/receipts/<name>.sqlite`) |
-| `--price-guard 0|1` | Fail-closed quoting based on oracle (default `1`) |
+
+##### Price Guard (Fail-Closed Quoting)
+
+| Flag | Meaning |
+|---|---|
+| `--price-guard 0|1` | Enable price guardrails (default `1`) |
 | `--price-max-age-ms <n>` | Reject stale snapshots (default `15000`) |
 | `--maker-spread-bps <n>` | Quote spread vs oracle (default `0`) |
 | `--maker-max-overpay-bps <n>` | If RFQ requests a favorable price for maker, accept it up to this cap (default `0`) |
+
+##### Swap Execution (`--run-swap 1`)
+
+| Flag | Meaning |
+|---|---|
 | `--run-swap 0|1` | Execute the full swap state machine (default `0`) |
 | `--swap-timeout-sec <n>` | Per-swap timeout (default `300`) |
 | `--swap-resend-ms <n>` | Proof resend interval (default `1200`) |
 | `--terms-valid-sec <n>` | Terms validity window (default `300`) |
 | `--solana-refund-after-sec <n>` | Solana refund timelock from terms send time (default `3600`) |
+
+##### Solana
+
+| Flag | Meaning |
+|---|---|
 | `--solana-rpc-url <url[,url2,...]>` | Solana RPC pool (default `http://127.0.0.1:8899`) |
 | `--solana-keypair <path>` | Maker Solana keypair (required when `--run-swap 1`) |
 | `--solana-mint <pubkey>` | SPL mint for escrow (required when `--run-swap 1`) |
@@ -238,18 +267,31 @@ Maker bot flags (`scripts/otc-maker.mjs`):
 | `--solana-cu-limit <units>` | Optional compute unit limit |
 | `--solana-cu-price <microLamports>` | Optional priority fee |
 | `--solana-trade-fee-collector <pubkey>` | Which trade-fee config PDA to use (defaults to platform fee collector) |
+
+##### Lightning
+
+| Flag | Meaning |
+|---|---|
 | `--ln-impl <cln|lnd>` | Lightning implementation (default `cln`) |
 | `--ln-backend <docker|cli>` | Lightning backend (default `docker`) |
 | `--ln-compose-file <path>` | Docker compose file (default `dev/ln-regtest/docker-compose.yml`) |
 | `--ln-service <name>` | Docker service name (required when `--ln-backend docker`) |
 | `--ln-network <regtest|signet|mainnet|...>` | Lightning network (default `regtest`) |
 | `--ln-cli-bin <path>` | CLI binary override (for `--ln-backend cli`) |
-| `--lnd-rpcserver <host:port>` | LND CLI backend (optional; for `--ln-impl lnd --ln-backend cli`) |
-| `--lnd-tlscert <path>` | LND TLS cert (optional; for `--ln-backend cli`) |
-| `--lnd-macaroon <path>` | LND macaroon (optional; for `--ln-backend cli`) |
-| `--lnd-dir <path>` | LND dir (optional; for `--ln-backend cli`) |
 
-Taker bot flags (`scripts/otc-taker.mjs`):
+##### LND CLI Backend Extras (Only if `--ln-impl lnd --ln-backend cli`)
+
+| Flag | Meaning |
+|---|---|
+| `--lnd-rpcserver <host:port>` | LND RPC server (for `lncli`) |
+| `--lnd-tlscert <path>` | TLS cert path |
+| `--lnd-macaroon <path>` | Macaroon path |
+| `--lnd-dir <path>` | LND dir |
+
+#### `otc-taker` Flags (`scripts/otc-taker.mjs`)
+
+##### General
+
 | Flag | Meaning |
 |---|---|
 | `--trade-id <id>` | Trade id (default random) |
@@ -261,81 +303,114 @@ Taker bot flags (`scripts/otc-taker.mjs`):
 | `--rfq-resend-ms <n>` | RFQ resend interval (default `1200`) |
 | `--accept-resend-ms <n>` | Quote accept resend interval (default `1200`) |
 | `--once 0|1` | Exit after one completed swap (default `0`) |
+| `--once-exit-delay-ms <n>` | Delay before exiting when `--once 1` (default `200`) |
 | `--debug 0|1` | Verbose logs (default `0`) |
 | `--receipts-db <path>` | Receipts DB path (recommended: `onchain/receipts/<name>.sqlite`) |
 | `--persist-preimage 0|1` | Persist `ln_preimage_hex` into receipts (default `1` when receipts enabled) |
 | `--stop-after-ln-pay 0|1` | Testing/recovery hook: stop after paying LN (default `0`) |
-| `--price-guard 0|1` | Fail-closed quoting based on oracle (default `1`) |
+
+##### Price Guard (Fail-Closed)
+
+| Flag | Meaning |
+|---|---|
+| `--price-guard 0|1` | Enable price guardrails (default `1`) |
 | `--price-max-age-ms <n>` | Reject stale snapshots (default `15000`) |
 | `--taker-max-discount-bps <n>` | Reject quotes discounted beyond this vs oracle median (default `200`) |
+
+##### Swap Execution (`--run-swap 1`)
+
+| Flag | Meaning |
+|---|---|
 | `--run-swap 0|1` | Execute the full swap state machine (default `0`) |
 | `--swap-timeout-sec <n>` | Per-swap timeout (default `300`) |
 | `--swap-resend-ms <n>` | Proof resend interval (default `1200`) |
+
+##### Solana
+
+| Flag | Meaning |
+|---|---|
 | `--solana-rpc-url <url[,url2,...]>` | Solana RPC pool (default `http://127.0.0.1:8899`) |
 | `--solana-keypair <path>` | Taker Solana keypair (required when `--run-swap 1`) |
 | `--solana-mint <pubkey>` | SPL mint for escrow (required when `--run-swap 1`) |
 | `--solana-decimals <n>` | Mint decimals (default `6`) |
 | `--solana-cu-limit <units>` | Optional compute unit limit |
 | `--solana-cu-price <microLamports>` | Optional priority fee |
+
+##### Lightning
+
+| Flag | Meaning |
+|---|---|
 | `--ln-impl <cln|lnd>` | Lightning implementation (default `cln`) |
 | `--ln-backend <docker|cli>` | Lightning backend (default `docker`) |
 | `--ln-compose-file <path>` | Docker compose file (default `dev/ln-regtest/docker-compose.yml`) |
 | `--ln-service <name>` | Docker service name (required when `--ln-backend docker`) |
 | `--ln-network <regtest|signet|mainnet|...>` | Lightning network (default `regtest`) |
 | `--ln-cli-bin <path>` | CLI binary override (for `--ln-backend cli`) |
-| `--lnd-rpcserver <host:port>` | LND CLI backend (optional; for `--ln-impl lnd --ln-backend cli`) |
-| `--lnd-tlscert <path>` | LND TLS cert (optional; for `--ln-backend cli`) |
-| `--lnd-macaroon <path>` | LND macaroon (optional; for `--ln-backend cli`) |
-| `--lnd-dir <path>` | LND dir (optional; for `--ln-backend cli`) |
+
+##### LND CLI Backend Extras (Only if `--ln-impl lnd --ln-backend cli`)
+
+| Flag | Meaning |
+|---|---|
+| `--lnd-rpcserver <host:port>` | LND RPC server (for `lncli`) |
+| `--lnd-tlscert <path>` | TLS cert path |
+| `--lnd-macaroon <path>` | Macaroon path |
+| `--lnd-dir <path>` | LND dir |
 
 ---
 
 ### Recovery (`swaprecover`)
 
-Global flags:
+`swaprecover` provides a deterministic recovery path using the local receipts DB.
+
+#### Global Flags
+
 | Flag | Meaning |
 |---|---|
 | `--receipts-db <path>` | Receipts DB (SQLite; should live under `onchain/`) |
 
-Commands:
-| Function call | What it does | Parameters |
+#### Commands
+
+| Command | What it does | Flags |
 |---|---|---|
 | `list` | List trades in receipts | Optional: `--limit <n>` |
-| `show` | Show one trade | Requires one of: `--trade-id <id>`, `--payment-hash <hex32>` |
-| `claim` | Claim Solana escrow if LN was paid but agent crashed | Requires: `--solana-rpc-url <csv>`, `--solana-keypair <path>`, and one of: `--trade-id <id>`, `--payment-hash <hex32>` |
-| `refund` | Refund Solana escrow after timeout | Requires: `--solana-rpc-url <csv>`, `--solana-keypair <path>`, and one of: `--trade-id <id>`, `--payment-hash <hex32>` |
+| `show` | Show one trade | One of: `--trade-id <id>`, `--payment-hash <hex32>` |
+| `claim` | Claim Solana escrow if LN was paid but agent crashed | One of: `--trade-id <id>`, `--payment-hash <hex32>`; required: `--solana-rpc-url <csv>`, `--solana-keypair <path>` |
+| `refund` | Refund Solana escrow after timeout | One of: `--trade-id <id>`, `--payment-hash <hex32>`; required: `--solana-rpc-url <csv>`, `--solana-keypair <path>` |
 
 ---
 
 ### Solana Wallet Tooling (`solctl`)
 
-Global flags:
+#### Global Flags
+
 | Flag | Meaning |
 |---|---|
 | `--rpc-url <url[,url2,...]>` | RPC pool (default `http://127.0.0.1:8899`) |
 | `--commitment <processed|confirmed|finalized>` | Commitment (default `confirmed`) |
 
-Commands:
-| Function call | What it does | Parameters |
+#### Commands
+
+| Command | What it does | Flags |
 |---|---|---|
-| `keygen` | Create a keypair | Required: `--out <path>`; optional: `--seed-hex <hex32>`, `--force 0|1` |
-| `address` | Print pubkey | Required: `--keypair <path>` |
-| `balance` | SOL balance | Required: `--keypair <path>` |
-| `airdrop` | Devnet/testnet airdrop | Required: `--keypair <path>`, `--sol <n>` |
-| `transfer-sol` | Send SOL | Required: `--keypair <path>`, `--to <pubkey>`, `--sol <n>` |
-| `mint-create` | Create a test mint | Required: `--keypair <path>`, `--decimals <n>`; optional: `--out <path>` |
-| `mint-info` | Inspect mint | Required: `--mint <pubkey>` |
-| `token-ata` | Print or create ATA | Required: `--keypair <path>`, `--mint <pubkey>`; optional: `--owner <pubkey>`, `--create 0|1` |
-| `token-balance` | SPL token balance | Required: `--keypair <path>`, `--mint <pubkey>`; optional: `--owner <pubkey>` |
-| `token-transfer` | Transfer SPL tokens | Required: `--keypair <path>`, `--mint <pubkey>`, `--to <pubkey>`, `--amount <u64>`; optional: `--create-ata 0|1` |
-| `mint-to` | Mint test tokens | Required: `--keypair <path>`, `--mint <pubkey>`, `--to <pubkey>`, `--amount <u64>`; optional: `--create-ata 0|1` |
-| `inventory` | Print balances across mints | Required: `--keypair <path>`; optional: `--mints <csvPubkeys>` |
+| `keygen` | Create a keypair | `--out <path>`; optional: `--seed-hex <hex32>`, `--force 0|1` |
+| `address` | Print pubkey | `--keypair <path>` |
+| `balance` | SOL balance | `--keypair <path>` |
+| `airdrop` | Devnet/testnet airdrop | `--keypair <path> --sol <n>` |
+| `transfer-sol` | Send SOL | `--keypair <path> --to <pubkey> --sol <n>` |
+| `mint-create` | Create a test mint | `--keypair <path> --decimals <n>`; optional: `--out <path>` |
+| `mint-info` | Inspect mint | `--mint <pubkey>` |
+| `token-ata` | Print or create ATA | `--keypair <path> --mint <pubkey>`; optional: `--owner <pubkey>`, `--create 0|1` |
+| `token-balance` | SPL token balance | `--keypair <path> --mint <pubkey>`; optional: `--owner <pubkey>` |
+| `token-transfer` | Transfer SPL tokens | `--keypair <path> --mint <pubkey> --to <pubkey> --amount <u64>`; optional: `--create-ata 0|1` |
+| `mint-to` | Mint test tokens | `--keypair <path> --mint <pubkey> --to <pubkey> --amount <u64>`; optional: `--create-ata 0|1` |
+| `inventory` | Print balances across mints | `--keypair <path>`; optional: `--mints <csvPubkeys>` |
 
 ---
 
 ### Solana Escrow Program Tooling (`escrowctl`)
 
-Global flags:
+#### Global Flags
+
 | Flag | Meaning |
 |---|---|
 | `--solana-rpc-url <url[,url2,...]>` | RPC pool (default `http://127.0.0.1:8899`) |
@@ -345,38 +420,41 @@ Global flags:
 | `--solana-cu-price <microLamports>` | Optional priority fee |
 | `--solana-keypair <path>` | Required for signing commands (`config-init`, `config-set`, withdrawals, trade config init/set) |
 
-Commands:
-| Function call | What it does | Parameters |
+#### Commands
+
+| Command | What it does | Flags |
 |---|---|---|
 | `config-get` | Read platform config | none |
-| `config-init` | Initialize platform fee config | Required: `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `config-set` | Update platform fee config | Required: `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `fees-balance` | Platform fee vault balance | Required: `--mint <pubkey>` |
-| `fees-withdraw` | Withdraw platform fees | Required: `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
-| `trade-config-get` | Read trade fee config | Required: `--fee-collector <pubkey>` |
-| `trade-config-init` | Initialize trade fee config | Required: `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `trade-config-set` | Update trade fee config | Required: `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `trade-fees-balance` | Trade fee vault balance | Required: `--fee-collector <pubkey>`, `--mint <pubkey>` |
-| `trade-fees-withdraw` | Withdraw trade fees (for the signer fee collector) | Required: `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
-| `escrow-get` | Inspect escrow state | Required: `--payment-hash <hex32>` |
+| `config-init` | Initialize platform fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `config-set` | Update platform fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `fees-balance` | Platform fee vault balance | `--mint <pubkey>` |
+| `fees-withdraw` | Withdraw platform fees | `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
+| `trade-config-get` | Read trade fee config | `--fee-collector <pubkey>` |
+| `trade-config-init` | Initialize trade fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `trade-config-set` | Update trade fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `trade-fees-balance` | Trade fee vault balance | `--fee-collector <pubkey> --mint <pubkey>` |
+| `trade-fees-withdraw` | Withdraw trade fees (for the signer fee collector) | `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
+| `escrow-get` | Inspect escrow state | `--payment-hash <hex32>` |
 
 ---
 
 ### Solana Program Build/Deploy (`solprogctl`) (Maintainers Only)
 
-Commands:
-| Function call | What it does | Parameters |
+#### Commands
+
+| Command | What it does | Flags |
 |---|---|---|
 | `id` | Print the program id used by the codebase | none |
 | `build` | Build the SBF program | none (requires Rust + Solana CLI toolchain) |
-| `deploy` | Deploy/upgrade the program | Required: `--rpc-url <url>`, `--payer <keypair.json>`, `--program-keypair <keypair.json>`; optional: `--upgrade-authority <keypair.json>`, `--so <path>`, `--dry-run 0|1` |
-| `keypair-pubkey` | Print a program pubkey from a keypair file | Required: `--program-keypair <keypair.json>` |
+| `deploy` | Deploy/upgrade the program | Required: `--rpc-url <url> --payer <keypair.json> --program-keypair <keypair.json>`; optional: `--upgrade-authority <keypair.json>`, `--so <path>`, `--dry-run 0|1` |
+| `keypair-pubkey` | Print a program pubkey from a keypair file | `--program-keypair <keypair.json>` |
 
 ---
 
 ### Lightning Operator Tooling (`lnctl`)
 
-Global flags:
+#### Global Flags
+
 | Flag | Meaning |
 |---|---|
 | `--impl <cln|lnd>` | Implementation (default `cln`) |
@@ -390,20 +468,21 @@ Global flags:
 | `--lnd-macaroon <path>` | LND CLI backend extra |
 | `--lnd-dir <path>` | LND CLI backend extra |
 
-Commands:
-| Function call | What it does | Parameters |
+#### Commands
+
+| Command | What it does | Flags |
 |---|---|---|
 | `info` | Node info | none |
 | `newaddr` | New on-chain address | none |
 | `listfunds` | Wallet + channel balances | none |
 | `balance` | Alias of listfunds wallet balance | none |
-| `connect` | Connect to a peer | Required: `--peer <nodeid@host:port>` |
-| `fundchannel` | Open a channel | Required: `--node-id <hex>`, `--amount-sats <n>` |
-| `invoice` | Create invoice | Required: `--msat <amountmsat>`, `--label <label>`, `--desc <text>`; optional: `--expiry <sec>` |
-| `decodepay` | Decode a BOLT11 invoice | Required: `--bolt11 <invoice>` |
-| `pay` | Pay invoice | Required: `--bolt11 <invoice>` |
-| `pay-status` | Payment status | Required: `--payment-hash <hex32>` |
-| `preimage-get` | Preimage lookup (for recovery) | Required: `--payment-hash <hex32>` |
+| `connect` | Connect to a peer | `--peer <nodeid@host:port>` |
+| `fundchannel` | Open a channel | `--node-id <hex> --amount-sats <n>` |
+| `invoice` | Create invoice | `--msat <amountmsat> --label <label> --desc <text>`; optional: `--expiry <sec>` |
+| `decodepay` | Decode a BOLT11 invoice | `--bolt11 <invoice>` |
+| `pay` | Pay invoice | `--bolt11 <invoice>` |
+| `pay-status` | Payment status | `--payment-hash <hex32>` |
+| `preimage-get` | Preimage lookup (for recovery) | `--payment-hash <hex32>` |
 
 ---
 
@@ -411,17 +490,19 @@ Commands:
 
 This is only for running LND from a local directory under `onchain/` (not required if you use the docker deployments in `dev/`).
 
-LND lifecycle (`lndctl`):
-| Function call | What it does | Parameters |
-|---|---|---|
-| `init` | Generate an `lnd.conf` | Required: `--node <name>`; optional: `--network <mainnet|testnet|signet|regtest>`, `--lnd-dir <path>`, `--alias <str>`, `--p2p-port <n>`, `--rpc-port <n>`, `--rest-port <n>`, `--bitcoin-node <neutrino|bitcoind>`, `--neutrino-peers <host:port[,..]>`, `--wallet-password-file <path>` |
-| `start` | Start `lnd` | Required: `--node <name>`; optional: `--network <...>`, `--lnd-dir <path>`, `--lnd-bin <path>` |
-| `stop` | Stop `lnd` | Required: `--node <name>`; optional: `--network <...>`, `--lnd-dir <path>`, `--lncli-bin <path>` |
-| `create-wallet` | Create wallet (interactive) | Required: `--node <name>`; optional: `--network <...>`, `--lnd-dir <path>`, `--lncli-bin <path>` |
-| `unlock` | Unlock wallet (interactive) | Required: `--node <name>`; optional: `--network <...>`, `--lnd-dir <path>`, `--lncli-bin <path>` |
-| `paths` | Print TLS/macaroon paths | Required: `--node <name>`; optional: `--network <...>`, `--lnd-dir <path>` |
+#### `lndctl` Commands
 
-Wallet password helper (`lndpw`):
+| Command | What it does | Synopsis |
+|---|---|---|
+| `init` | Generate `lnd.conf` under `onchain/` | `init --node <name> [--network <mainnet|testnet|signet|regtest>] [--lnd-dir <path>] [--alias <str>] [--p2p-port <n>] [--rpc-port <n>] [--rest-port <n>] [--bitcoin-node <neutrino|bitcoind>] [--neutrino-peers <host:port[,..]>] [--wallet-password-file <path>]` |
+| `start` | Start `lnd` | `start --node <name> [--network <...>] [--lnd-dir <path>] [--lnd-bin <path>]` |
+| `stop` | Stop `lnd` | `stop --node <name> [--network <...>] [--lnd-dir <path>] [--lncli-bin <path>]` |
+| `create-wallet` | Create wallet (interactive) | `create-wallet --node <name> [--network <...>] [--lnd-dir <path>] [--lncli-bin <path>]` |
+| `unlock` | Unlock wallet (interactive) | `unlock --node <name> [--network <...>] [--lnd-dir <path>] [--lncli-bin <path>]` |
+| `paths` | Print TLS/macaroon paths | `paths --node <name> [--network <...>] [--lnd-dir <path>]` |
+
+#### `lndpw` Helper
+
 | Function call | What it does | Parameters |
 |---|---|---|
 | `scripts/lndpw.sh <outFile>` | Writes a password file (no trailing newline) | Positional: `<outFile>` (example: `onchain/lnd/mainnet/maker/wallet.pw`) |
@@ -430,7 +511,7 @@ Wallet password helper (`lndpw`):
 
 ## Prompt Router (Planned)
 
-Not implemented yet: a small “prompt router” layer that converts high-level prompts into the script invocations above (with full parameterization and guardrails). The intention is:
+Not implemented yet: a small "prompt router" layer that converts high-level prompts into the script invocations above (with full parameterization and guardrails). The intention is:
 - Use a top-tier model to install/upgrade and generate safe scripts/configs.
 - After install, run day-to-day operations via tool calls (scripts) so a smaller model (or humans/programs) can operate the system reliably.
 
