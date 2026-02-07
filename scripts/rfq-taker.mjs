@@ -184,8 +184,16 @@ async function main() {
   const minSolRefundWindowSec = parseIntFlag(
     flags.get('min-solana-refund-window-sec'),
     'min-solana-refund-window-sec',
-    72 * 3600
+    3600
   );
+  const maxSolRefundWindowSec = parseIntFlag(
+    flags.get('max-solana-refund-window-sec'),
+    'max-solana-refund-window-sec',
+    7 * 24 * 3600
+  );
+  const maxPlatformFeeBps = parseBps(flags.get('max-platform-fee-bps'), 'max-platform-fee-bps', 500);
+  const maxTradeFeeBps = parseBps(flags.get('max-trade-fee-bps'), 'max-trade-fee-bps', 1000);
+  const maxTotalFeeBps = parseBps(flags.get('max-total-fee-bps'), 'max-total-fee-bps', 1500);
 
   const solRpcUrl = (flags.get('solana-rpc-url') && String(flags.get('solana-rpc-url')).trim()) || 'http://127.0.0.1:8899';
   const solKeypairPath = flags.get('solana-keypair') ? String(flags.get('solana-keypair')).trim() : '';
@@ -507,6 +515,49 @@ async function main() {
           `terms.sol_refund_after_unix too soon (window_sec=${windowSec} min=${minSolRefundWindowSec})`
         );
       }
+      if (maxSolRefundWindowSec !== null && Number.isFinite(maxSolRefundWindowSec) && windowSec > maxSolRefundWindowSec) {
+        throw new Error(
+          `terms.sol_refund_after_unix too far (window_sec=${windowSec} max=${maxSolRefundWindowSec})`
+        );
+      }
+    }
+
+    // Guardrail: terms must match the quote we accepted (prevents bait-and-switch between RFQ and swap channel).
+    if (chosen?.quote?.body) {
+      if (Number(termsMsg.body?.btc_sats) !== Number(chosen.quote.body?.btc_sats)) {
+        throw new Error(
+          `terms.btc_sats mismatch vs quote (terms=${termsMsg.body?.btc_sats} quote=${chosen.quote.body?.btc_sats})`
+        );
+      }
+      if (String(termsMsg.body?.usdt_amount) !== String(chosen.quote.body?.usdt_amount)) {
+        throw new Error(
+          `terms.usdt_amount mismatch vs quote (terms=${termsMsg.body?.usdt_amount} quote=${chosen.quote.body?.usdt_amount})`
+        );
+      }
+      if (chosen.quote.body?.sol_mint) {
+        if (String(termsMsg.body?.sol_mint) !== String(chosen.quote.body?.sol_mint)) {
+          throw new Error(
+            `terms.sol_mint mismatch vs quote (terms=${termsMsg.body?.sol_mint} quote=${chosen.quote.body?.sol_mint})`
+          );
+        }
+      }
+    }
+
+    // Guardrail: fee ceilings (local policy; on-chain also enforces hard caps).
+    const platformFeeBps = Number(termsMsg.body?.platform_fee_bps || 0);
+    const tradeFeeBps = Number(termsMsg.body?.trade_fee_bps || 0);
+    if (!Number.isFinite(platformFeeBps) || platformFeeBps < 0) throw new Error('terms.platform_fee_bps invalid');
+    if (!Number.isFinite(tradeFeeBps) || tradeFeeBps < 0) throw new Error('terms.trade_fee_bps invalid');
+    if (platformFeeBps > maxPlatformFeeBps) {
+      throw new Error(`terms.platform_fee_bps too high (got=${platformFeeBps} max=${maxPlatformFeeBps})`);
+    }
+    if (tradeFeeBps > maxTradeFeeBps) {
+      throw new Error(`terms.trade_fee_bps too high (got=${tradeFeeBps} max=${maxTradeFeeBps})`);
+    }
+    if (platformFeeBps + tradeFeeBps > maxTotalFeeBps) {
+      throw new Error(
+        `terms total fee too high (got=${platformFeeBps + tradeFeeBps} max=${maxTotalFeeBps})`
+      );
     }
 
     const termsHash = hashUnsignedEnvelope(stripSignature(termsMsg));

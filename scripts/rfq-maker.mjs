@@ -185,6 +185,18 @@ async function main() {
   const solRefundAfterSec = parseIntFlag(flags.get('solana-refund-after-sec'), 'solana-refund-after-sec', 72 * 3600);
   const lnInvoiceExpirySec = parseIntFlag(flags.get('ln-invoice-expiry-sec'), 'ln-invoice-expiry-sec', 3600);
 
+  // Hard guardrails for safety + inventory lockup.
+  // - Too short => increases "paid but can't claim before refund" risk.
+  // - Too long  => griefing can lock maker inventory for excessive time.
+  const SOL_REFUND_MIN_SEC = 3600; // 1h
+  const SOL_REFUND_MAX_SEC = 7 * 24 * 3600; // 1w
+  if (!Number.isFinite(solRefundAfterSec) || solRefundAfterSec < SOL_REFUND_MIN_SEC) {
+    die(`Invalid --solana-refund-after-sec (must be >= ${SOL_REFUND_MIN_SEC})`);
+  }
+  if (solRefundAfterSec > SOL_REFUND_MAX_SEC) {
+    die(`Invalid --solana-refund-after-sec (must be <= ${SOL_REFUND_MAX_SEC})`);
+  }
+
   const solRpcUrl = (flags.get('solana-rpc-url') && String(flags.get('solana-rpc-url')).trim()) || 'http://127.0.0.1:8899';
   const solKeypairPath = flags.get('solana-keypair') ? String(flags.get('solana-keypair')).trim() : '';
   const solMintStr = flags.get('solana-mint') ? String(flags.get('solana-mint')).trim() : '';
