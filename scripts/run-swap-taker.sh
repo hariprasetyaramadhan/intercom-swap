@@ -7,19 +7,19 @@ cd "$ROOT"
 . scripts/_env.sh
 
 # Dev-oriented swap taker/client peer.
-# - joins the public OTC channel (to see RFQs/quotes)
+# - joins the public RFQ channel (to see RFQs/quotes)
 # - requires invites for swap:* channels, and must trust the maker's inviter pubkey(s)
 #
 # Notes:
-# - Welcome enforcement is disabled here to keep OTC join friction low. For stricter authenticity,
-#   remove `--sidechannel-welcome-required 0` and distribute owner+welcome for the OTC channel.
+# - Welcome enforcement is disabled here to keep RFQ join friction low. For stricter authenticity,
+#   remove `--sidechannel-welcome-required 0` and distribute owner+welcome for the RFQ channel.
 #
 # Usage:
-#   SWAP_INVITER_KEYS="<makerPeerPubkeyHex[,more]>" scripts/run-swap-taker.sh [storeName] [scBridgePort] [otcChannel]
+#   SWAP_INVITER_KEYS="<makerPeerPubkeyHex[,more]>" scripts/run-swap-taker.sh [storeName] [scBridgePort] [rfqChannel]
 
 STORE_NAME="${1:-swap-taker}"
 SC_PORT="${2:-49223}"
-OTC_CHANNEL="${3:-0000intercomswapbtcusdt}"
+RFQ_CHANNEL="${3:-0000intercomswapbtcusdt}"
 shift 3 || true
 
 SIDECHANNEL_POW="${SIDECHANNEL_POW:-1}"
@@ -52,7 +52,7 @@ exec pear run . \
   --sc-bridge 1 \
   --sc-bridge-token "$SC_TOKEN" \
   --sc-bridge-port "$SC_PORT" \
-  --sidechannels "$OTC_CHANNEL" \
+  --sidechannels "$RFQ_CHANNEL" \
   --sidechannel-pow "$SIDECHANNEL_POW" \
   --sidechannel-pow-difficulty "$SIDECHANNEL_POW_DIFFICULTY" \
   --sidechannel-welcome-required 0 \

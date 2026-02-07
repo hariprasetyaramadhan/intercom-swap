@@ -5,7 +5,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $root
 
 if ($args.Length -lt 2) {
-  throw "Usage: scripts\\otc-maker-peer.ps1 <storeName> <scBridgePort> [otc-maker args...]`nExample: scripts\\otc-maker-peer.ps1 swap-maker 49222 --otc-channel 0000intercomswapbtcusdt"
+  throw "Usage: scripts\\rfq-maker-peer.ps1 <storeName> <scBridgePort> [rfq-maker args...]`nExample: scripts\\rfq-maker-peer.ps1 swap-maker 49222 --rfq-channel 0000intercomswapbtcusdt"
 }
 
 $storeName = [string]$args[0]
@@ -22,4 +22,4 @@ if (-not (Test-Path -Path $tokenFile)) {
 
 $scToken = (Get-Content -Raw -Path $tokenFile).Trim()
 
-node scripts/otc-maker.mjs --url ("ws://127.0.0.1:{0}" -f $scPort) --token $scToken --receipts-db ("onchain/receipts/{0}.sqlite" -f $storeName) @rest
+node scripts/rfq-maker.mjs --url ("ws://127.0.0.1:{0}" -f $scPort) --token $scToken --receipts-db ("onchain/receipts/{0}.sqlite" -f $storeName) @rest

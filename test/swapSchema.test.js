@@ -128,7 +128,7 @@ test('swap schema: quote_accept + swap_invite validate', async () => {
   const maker = await newWallet();
   const taker = await newWallet();
 
-  const tradeId = 'swap_test_otc_1';
+  const tradeId = 'swap_test_rfq_1';
   const nowSec = Math.floor(Date.now() / 1000);
 
   const rfq = createUnsignedEnvelope({
@@ -208,8 +208,8 @@ test('swap schema: svc_announce validates minimal + extended fields', async () =
     body: {
       name: 'swap-maker',
       pairs: [PAIR.BTC_LN__USDT_SOL],
-      otc_channels: ['0000intercomswapbtcusdt'],
-      note: 'Have USDT, want BTC',
+      rfq_channels: ['0000intercomswapbtcusdt'],
+      note: 'e2e note',
       offers: [{ have: ASSET.USDT_SOL, want: ASSET.BTC_LN, pair: PAIR.BTC_LN__USDT_SOL }],
       valid_until_unix: nowSec + 60,
     },

@@ -75,7 +75,7 @@ Pull the latest version of this fork, resolve merge conflicts, and run all tests
 Rendezvous (directory only)                      Trade negotiation
 0000intercom                                     0000intercomswapbtcusdt
     |                                                   |
-    | (svc_announce: "I swap BTC<->USDT")               |  RFQ -> QUOTE -> QUOTE_ACCEPT
+    | (svc_announce: {name,pairs,rfq_channels})         |  RFQ -> QUOTE -> QUOTE_ACCEPT
     |                                                   v
     +----------------------------------------------> per-trade invite
                                                      swap:<trade_id> (invite-only)
@@ -104,12 +104,13 @@ After installation, day-to-day operation should be done by invoking scripts (mac
 | Area | macOS/Linux | Windows | Canonical | Purpose |
 |---|---|---|---|---|
 | Bootstrap | `scripts/bootstrap.sh` | n/a | bash | Install Pear runtime + deps |
-| Start peer (maker/service) | `scripts/run-swap-maker.sh` | `scripts/run-swap-maker.ps1` | shell | Start a peer with SC-Bridge + price oracle and join an OTC channel |
-| Start peer (taker/client) | `scripts/run-swap-taker.sh` | `scripts/run-swap-taker.ps1` | shell | Start a peer with SC-Bridge + price oracle and join an OTC channel; pins `SWAP_INVITER_KEYS` for `swap:*` |
+| Start peer (maker/service) | `scripts/run-swap-maker.sh` | `scripts/run-swap-maker.ps1` | shell | Start a peer with SC-Bridge + price oracle and join an RFQ channel |
+| Start peer (taker/client) | `scripts/run-swap-taker.sh` | `scripts/run-swap-taker.ps1` | shell | Start a peer with SC-Bridge + price oracle and join an RFQ channel; pins `SWAP_INVITER_KEYS` for `swap:*` |
 | SC-Bridge control | `scripts/swapctl.sh` | `scripts/swapctl.ps1` | `scripts/swapctl.mjs` | Sidechannel ops + signed message helpers |
 | SC-Bridge control (token auto) | `scripts/swapctl-peer.sh` | `scripts/swapctl-peer.ps1` | wrapper | Same as `swapctl`, but reads token from `onchain/sc-bridge/<store>.token` |
-| OTC maker bot | `scripts/otc-maker-peer.sh` | `scripts/otc-maker-peer.ps1` | `scripts/otc-maker.mjs` | Quote RFQs; optionally run full swap state machine |
-| OTC taker bot | `scripts/otc-taker-peer.sh` | `scripts/otc-taker-peer.ps1` | `scripts/otc-taker.mjs` | Send RFQ; accept quote; optionally run full swap state machine |
+| RFQ maker bot | `scripts/rfq-maker-peer.sh` | `scripts/rfq-maker-peer.ps1` | `scripts/rfq-maker.mjs` | Quote RFQs; optionally run full swap state machine |
+| RFQ taker bot | `scripts/rfq-taker-peer.sh` | `scripts/rfq-taker-peer.ps1` | `scripts/rfq-taker.mjs` | Send RFQ; accept quote; optionally run full swap state machine |
+| RFQ bot control | `scripts/rfqbotmgr.sh` | `scripts/rfqbotmgr.ps1` | `scripts/rfqbotmgr.mjs` | Start/stop/restart RFQ bot instances without stopping the peer |
 | Recovery | `scripts/swaprecover.sh` | `scripts/swaprecover.ps1` | `scripts/swaprecover.mjs` | List/show receipts; claim/refund escrows |
 | Solana wallet ops | `scripts/solctl.sh` | `scripts/solctl.ps1` | `scripts/solctl.mjs` | Keypairs, balances, ATA, token transfers |
 | Solana escrow ops | `scripts/escrowctl.sh` | `scripts/escrowctl.ps1` | `scripts/escrowctl.mjs` | Program config, fee vaults, escrow inspection |
@@ -124,14 +125,14 @@ After installation, day-to-day operation should be done by invoking scripts (mac
 
 | Function call | What it does | Parameters |
 |---|---|---|
-| `scripts/run-swap-maker.sh [storeName] [scBridgePort] [otcChannel] [...extra peer flags]` | Starts a maker/service peer, enables SC-Bridge + price oracle, joins the OTC channel | Positional args; optional env: `SIDECHANNEL_POW` (default `1`), `SIDECHANNEL_POW_DIFFICULTY` (default `12`) |
-| `SWAP_INVITER_KEYS="<makerPeerPubkeyHex[,more]>" scripts/run-swap-taker.sh [storeName] [scBridgePort] [otcChannel] [...extra peer flags]` | Starts a taker/client peer and pins inviter key(s) for `swap:*` invite-only channels | Requires `SWAP_INVITER_KEYS`; same optional env vars as maker |
+| `scripts/run-swap-maker.sh [storeName] [scBridgePort] [rfqChannel] [...extra peer flags]` | Starts a maker/service peer, enables SC-Bridge + price oracle, joins the RFQ channel | Positional args; optional env: `SIDECHANNEL_POW` (default `1`), `SIDECHANNEL_POW_DIFFICULTY` (default `12`) |
+| `SWAP_INVITER_KEYS="<makerPeerPubkeyHex[,more]>" scripts/run-swap-taker.sh [storeName] [scBridgePort] [rfqChannel] [...extra peer flags]` | Starts a taker/client peer and pins inviter key(s) for `swap:*` invite-only channels | Requires `SWAP_INVITER_KEYS`; same optional env vars as maker |
 
 Notes:
 | Item | Details |
 |---|---|
 | Token files | Created under `onchain/sc-bridge/<storeName>.token` (gitignored). |
-| OTC channel | Any channel works. Use a dedicated rendezvous like `0000intercomswapbtcusdt` for trading, and keep `0000intercom` for service presence only. |
+| RFQ channel | Any channel works. Use a dedicated rendezvous like `0000intercomswapbtcusdt` for trading, and keep `0000intercom` for service presence only. |
 
 ---
 
@@ -177,7 +178,7 @@ Notes:
 
 | Command | What it does | Flags |
 |---|---|---|
-| `svc-announce` | Broadcast a signed service announcement | Required: `--channels <a,b,c> --name <label>`; optional: `--pairs <p1,p2>`, `--otc-channels <a,b,c>`, `--note <text>`, `--offers-json <json|@file>`, `--trade-id <id>`, `--ttl-sec <sec>`, `--join 0|1` |
+| `svc-announce` | Broadcast a signed service announcement | Required: `--channels <a,b,c> --name <label>`; optional: `--pairs <p1,p2>`, `--rfq-channels <a,b,c>`, `--note <text>`, `--offers-json <json|@file>`, `--trade-id <id>`, `--ttl-sec <sec>`, `--join 0|1` |
 | `svc-announce-loop` | Periodically re-broadcast announcements (sidechannels have no history) | Required: `--channels <a,b,c> --config <json|@file>`; optional: `--interval-sec <sec>`, `--watch 0|1`, `--ttl-sec <sec>`, `--trade-id <id>`, `--join 0|1` |
 
 ##### Welcome/Invite Helpers (Owner-Signed)
@@ -191,11 +192,11 @@ Notes:
 
 | Command | What it does | Flags |
 |---|---|---|
-| `rfq` | Send RFQ to an OTC channel | `--channel <otcChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr>`; optional: `--valid-until-unix <sec>` |
-| `quote` | Send quote | `--channel <otcChannel> --trade-id <id> --rfq-id <id> --btc-sats <n> --usdt-amount <atomicStr> --valid-until-unix <sec>` |
-| `quote-from-rfq` | Build + send a quote from an RFQ envelope | `--channel <otcChannel> --rfq-json <envelope|@file>`; optional: `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--valid-until-unix <sec>` |
-| `quote-accept` | Accept a quote | `--channel <otcChannel> --quote-json <envelope|@file>` |
-| `swap-invite-from-accept` | Create and send a `swap:<trade_id>` invite after acceptance | `--channel <otcChannel> --accept-json <envelope|@file>`; optional: `--swap-channel <name>`, `--welcome-text <text>`, `--ttl-sec <sec>` |
+| `rfq` | Send RFQ to an RFQ channel | `--channel <rfqChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr>`; optional: `--valid-until-unix <sec>` |
+| `quote` | Send quote | `--channel <rfqChannel> --trade-id <id> --rfq-id <id> --btc-sats <n> --usdt-amount <atomicStr> --valid-until-unix <sec>` |
+| `quote-from-rfq` | Build + send a quote from an RFQ envelope | `--channel <rfqChannel> --rfq-json <envelope|@file>`; optional: `--btc-sats <n>`, `--usdt-amount <atomicStr>`, `--valid-until-unix <sec>` |
+| `quote-accept` | Accept a quote | `--channel <rfqChannel> --quote-json <envelope|@file>` |
+| `swap-invite-from-accept` | Create and send a `swap:<trade_id>` invite after acceptance | `--channel <rfqChannel> --accept-json <envelope|@file>`; optional: `--swap-channel <name>`, `--welcome-text <text>`, `--ttl-sec <sec>` |
 | `join-from-swap-invite` | Join a swap channel using a swap-invite envelope | `--swap-invite-json <envelope|@file>` |
 | `terms` | Send swap terms into `swap:<id>` | Required: `--channel <swapChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr> --sol-mint <base58> --sol-recipient <base58> --sol-refund <base58> --sol-refund-after-unix <sec> --ln-receiver-peer <hex32> --ln-payer-peer <hex32> --platform-fee-bps <n> --trade-fee-bps <n> --trade-fee-collector <base58>`; optional: `--platform-fee-collector <base58>`, `--terms-valid-until-unix <sec>` |
 | `accept` | Accept swap terms | `--channel <swapChannel> --trade-id <id>` and one of: `--terms-hash <hex>` or `--terms-json <envelope|body|@file>` |
@@ -208,26 +209,38 @@ Notes:
 
 ---
 
-### OTC Bots (`otc-maker` / `otc-taker`)
+### RFQ Bots (`rfq-maker` / `rfq-taker`)
 
-These are long-running bots that sit in an OTC channel and negotiate RFQ/quotes. With `--run-swap 1` they run the full swap state machine inside an invite-only `swap:<trade_id>` channel.
+These are long-running bots that sit in an RFQ channel and negotiate RFQ/quotes. With `--run-swap 1` they run the full swap state machine inside an invite-only `swap:<trade_id>` channel.
 
 #### Wrappers
 
 | Wrapper | What it does |
 |---|---|
-| `scripts/otc-maker-peer.sh <storeName> <scPort> [...flags]` | Runs the maker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
-| `scripts/otc-maker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
-| `scripts/otc-taker-peer.sh <storeName> <scPort> [...flags]` | Runs the taker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
-| `scripts/otc-taker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
+| `scripts/rfq-maker-peer.sh <storeName> <scPort> [...flags]` | Runs the maker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
+| `scripts/rfq-maker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
+| `scripts/rfq-taker-peer.sh <storeName> <scPort> [...flags]` | Runs the taker bot against a running peer (reads token from `onchain/sc-bridge/<storeName>.token`) |
+| `scripts/rfq-taker-peer.ps1 <storeName> <scPort> [...flags]` | Same for Windows |
 
-#### `otc-maker` Flags (`scripts/otc-maker.mjs`)
+#### Bot Lifecycle (No Peer Downtime)
+
+Prefer `rfqbotmgr` for tool-call operation: stop/restart individual bot instances without touching `pear run`.
+
+| Function call | What it does |
+|---|---|
+| `scripts/rfqbotmgr.sh start-maker --name <id> --store <peerStore> --sc-port <n> -- [...rfq-maker flags]` | Start a maker bot in the background (logs under `onchain/rfq-bots/`) |
+| `scripts/rfqbotmgr.sh start-taker --name <id> --store <peerStore> --sc-port <n> -- [...rfq-taker flags]` | Start a taker bot in the background |
+| `scripts/rfqbotmgr.sh stop --name <id>` | Stop a running bot |
+| `scripts/rfqbotmgr.sh restart --name <id>` | Restart a bot with the last saved args |
+| `scripts/rfqbotmgr.sh status [--name <id>]` | Show bot state + PID + liveness |
+
+#### `rfq-maker` Flags (`scripts/rfq-maker.mjs`)
 
 ##### General
 
 | Flag | Meaning |
 |---|---|
-| `--otc-channel <name>` | OTC rendezvous channel (default `0000intercomswapbtcusdt`) |
+| `--rfq-channel <name>` | RFQ negotiation channel (default `0000intercomswapbtcusdt`) |
 | `--swap-channel-template <tmpl>` | Swap channel name template (default `swap:{trade_id}`) |
 | `--quote-valid-sec <n>` | Quote validity window (default `60`) |
 | `--invite-ttl-sec <n>` | Invite TTL (default `604800`) |
@@ -288,14 +301,14 @@ These are long-running bots that sit in an OTC channel and negotiate RFQ/quotes.
 | `--lnd-macaroon <path>` | Macaroon path |
 | `--lnd-dir <path>` | LND dir |
 
-#### `otc-taker` Flags (`scripts/otc-taker.mjs`)
+#### `rfq-taker` Flags (`scripts/rfq-taker.mjs`)
 
 ##### General
 
 | Flag | Meaning |
 |---|---|
 | `--trade-id <id>` | Trade id (default random) |
-| `--otc-channel <name>` | OTC rendezvous channel (default `0000intercomswapbtcusdt`) |
+| `--rfq-channel <name>` | RFQ negotiation channel (default `0000intercomswapbtcusdt`) |
 | `--btc-sats <n>` | Sats requested (default `50000`) |
 | `--usdt-amount <atomicStr>` | USDT requested; `0` means "open RFQ" (maker will quote via oracle) |
 | `--rfq-valid-sec <n>` | RFQ validity window (default `60`) |

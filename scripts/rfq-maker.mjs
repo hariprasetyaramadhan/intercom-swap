@@ -160,7 +160,7 @@ async function main() {
 
   const url = requireFlag(flags, 'url');
   const token = requireFlag(flags, 'token');
-  const otcChannel = (flags.get('otc-channel') && String(flags.get('otc-channel')).trim()) || '0000intercomswapbtcusdt';
+  const rfqChannel = (flags.get('rfq-channel') && String(flags.get('rfq-channel')).trim()) || '0000intercomswapbtcusdt';
   const swapChannelTemplate =
     (flags.get('swap-channel-template') && String(flags.get('swap-channel-template')).trim()) || 'swap:{trade_id}';
   const quoteValidSec = parseIntFlag(flags.get('quote-valid-sec'), 'quote-valid-sec', 60);
@@ -237,8 +237,8 @@ async function main() {
 
   const sc = new ScBridgeClient({ url, token });
   await sc.connect();
-  ensureOk(await sc.join(otcChannel), `join ${otcChannel}`);
-  ensureOk(await sc.subscribe([otcChannel]), `subscribe ${otcChannel}`);
+  ensureOk(await sc.join(rfqChannel), `join ${rfqChannel}`);
+  ensureOk(await sc.subscribe([rfqChannel]), `subscribe ${rfqChannel}`);
 
   const makerPubkey = String(sc.hello?.peer || '').trim().toLowerCase();
   if (!makerPubkey) die('SC-Bridge hello missing peer pubkey');
@@ -420,7 +420,7 @@ async function main() {
       ctx.tradeId,
       {
         role: 'maker',
-        otc_channel: otcChannel,
+        rfq_channel: rfqChannel,
         swap_channel: ctx.swapChannel,
         maker_peer: makerPubkey,
         taker_peer: ctx.inviteePubKey,
@@ -600,7 +600,7 @@ async function main() {
 
   sc.on('sidechannel_message', async (evt) => {
     try {
-      if (evt?.channel !== otcChannel && !swaps.has(evt?.channel)) return;
+      if (evt?.channel !== rfqChannel && !swaps.has(evt?.channel)) return;
       const msg = evt?.message;
       if (!msg || typeof msg !== 'object') return;
 
@@ -719,7 +719,7 @@ async function main() {
         });
         const quoteId = hashUnsignedEnvelope(quoteUnsigned);
         const signed = await signSwapEnvelope(sc, quoteUnsigned);
-        const sent = ensureOk(await sc.send(otcChannel, signed), 'send quote');
+        const sent = ensureOk(await sc.send(rfqChannel, signed), 'send quote');
         if (debug) process.stderr.write(`[maker] quoted trade_id=${msg.trade_id} rfq_id=${rfqId} quote_id=${quoteId} sent=${sent.type}\n`);
         quotes.set(quoteId, {
           rfq_id: rfqId,
@@ -785,7 +785,7 @@ async function main() {
           },
         });
         const swapInviteSigned = await signSwapEnvelope(sc, swapInviteUnsigned);
-        ensureOk(await sc.send(otcChannel, swapInviteSigned), 'send swap_invite');
+        ensureOk(await sc.send(rfqChannel, swapInviteSigned), 'send swap_invite');
         ensureOk(await sc.join(swapChannel, { welcome }), `join ${swapChannel}`);
         ensureOk(await sc.subscribe([swapChannel]), `subscribe ${swapChannel}`);
 
@@ -825,7 +825,7 @@ async function main() {
           tradeId,
           {
             role: 'maker',
-            otc_channel: otcChannel,
+            rfq_channel: rfqChannel,
             swap_channel: swapChannel,
             maker_peer: makerPubkey,
             taker_peer: inviteePubKey,
@@ -844,7 +844,7 @@ async function main() {
     }
   });
 
-  process.stdout.write(`${JSON.stringify({ type: 'ready', role: 'maker', otc_channel: otcChannel, pubkey: makerPubkey })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: 'ready', role: 'maker', rfq_channel: rfqChannel, pubkey: makerPubkey })}\n`);
   // Keep process alive.
   await new Promise(() => {});
 }

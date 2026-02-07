@@ -153,7 +153,7 @@ async function main() {
 
   const url = requireFlag(flags, 'url');
   const token = requireFlag(flags, 'token');
-  const otcChannel = (flags.get('otc-channel') && String(flags.get('otc-channel')).trim()) || '0000intercomswapbtcusdt';
+  const rfqChannel = (flags.get('rfq-channel') && String(flags.get('rfq-channel')).trim()) || '0000intercomswapbtcusdt';
   const receiptsDbPath = flags.get('receipts-db') ? String(flags.get('receipts-db')).trim() : '';
   const persistPreimage = parseBool(flags.get('persist-preimage'), receiptsDbPath ? true : false);
   const stopAfterLnPay = parseBool(flags.get('stop-after-ln-pay'), false);
@@ -231,8 +231,8 @@ async function main() {
   const sc = new ScBridgeClient({ url, token });
   await sc.connect();
 
-  ensureOk(await sc.join(otcChannel), `join ${otcChannel}`);
-  ensureOk(await sc.subscribe([otcChannel]), `subscribe ${otcChannel}`);
+  ensureOk(await sc.join(rfqChannel), `join ${rfqChannel}`);
+  ensureOk(await sc.subscribe([rfqChannel]), `subscribe ${rfqChannel}`);
 
   const takerPubkey = String(sc.hello?.peer || '').trim().toLowerCase();
   if (!takerPubkey) die('SC-Bridge hello missing peer pubkey');
@@ -300,12 +300,12 @@ async function main() {
   });
   const rfqId = hashUnsignedEnvelope(rfqUnsigned);
   const rfqSigned = await signSwapEnvelope(sc, rfqUnsigned);
-  ensureOk(await sc.send(otcChannel, rfqSigned), 'send rfq');
+  ensureOk(await sc.send(rfqChannel, rfqSigned), 'send rfq');
 
   persistTrade(
     {
       role: 'taker',
-      otc_channel: otcChannel,
+      rfq_channel: rfqChannel,
       maker_peer: null,
       taker_peer: takerPubkey,
       btc_sats: btcSats,
@@ -318,7 +318,7 @@ async function main() {
     rfqSigned
   );
 
-  process.stdout.write(`${JSON.stringify({ type: 'ready', role: 'taker', otc_channel: otcChannel, trade_id: tradeId, rfq_id: rfqId, pubkey: takerPubkey })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: 'ready', role: 'taker', rfq_channel: rfqChannel, trade_id: tradeId, rfq_id: rfqId, pubkey: takerPubkey })}\n`);
 
   let chosen = null; // { rfq_id, quote_id, quote }
   let joined = false;
@@ -350,7 +350,7 @@ async function main() {
     try {
       if (chosen) return;
       if (Date.now() > deadlineMs) return;
-      ensureOk(await sc.send(otcChannel, rfqSigned), 'resend rfq');
+      ensureOk(await sc.send(rfqChannel, rfqSigned), 'resend rfq');
       if (debug) process.stderr.write(`[taker] resend rfq trade_id=${tradeId}\n`);
     } catch (err) {
       if (debug) process.stderr.write(`[taker] resend rfq error: ${err?.message ?? String(err)}\n`);
@@ -364,7 +364,7 @@ async function main() {
       if (joined) return;
       if (Date.now() > deadlineMs) return;
       if (!quoteAcceptSigned) return;
-      ensureOk(await sc.send(otcChannel, quoteAcceptSigned), 'resend quote_accept');
+      ensureOk(await sc.send(rfqChannel, quoteAcceptSigned), 'resend quote_accept');
       if (debug) process.stderr.write(`[taker] resend quote_accept trade_id=${tradeId} quote_id=${chosen.quote_id}\n`);
     } catch (err) {
       if (debug) process.stderr.write(`[taker] resend quote_accept error: ${err?.message ?? String(err)}\n`);
@@ -379,7 +379,7 @@ async function main() {
   const enforceTimeout = setInterval(() => {
     if (Date.now() <= deadlineMs) return;
     stopTimers();
-    die(`Timeout waiting for OTC handshake (timeout-sec=${timeoutSec})`);
+    die(`Timeout waiting for RFQ handshake (timeout-sec=${timeoutSec})`);
   }, 200);
 
   const waitForSwapMessage = (match, { timeoutMs, label }) =>
@@ -716,7 +716,7 @@ async function main() {
         return;
       }
 
-      if (evt?.channel !== otcChannel) return;
+      if (evt?.channel !== rfqChannel) return;
       const msg = evt?.message;
       if (!msg || typeof msg !== 'object') return;
 
@@ -778,7 +778,7 @@ async function main() {
             },
           });
           quoteAcceptSigned = await signSwapEnvelope(sc, quoteAcceptUnsigned);
-          ensureOk(await sc.send(otcChannel, quoteAcceptSigned), 'send quote_accept');
+          ensureOk(await sc.send(rfqChannel, quoteAcceptSigned), 'send quote_accept');
           if (debug) process.stderr.write(`[taker] accepted quote trade_id=${tradeId} quote_id=${quoteId}\n`);
           process.stdout.write(`${JSON.stringify({ type: 'quote_accepted', trade_id: tradeId, rfq_id: rfqId, quote_id: quoteId })}\n`);
 

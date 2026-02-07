@@ -63,9 +63,9 @@ export function validateSwapBody(kind, body) {
           return { ok: false, error: 'svc_announce.pairs must be an array of strings' };
         }
       }
-      if (body.otc_channels !== undefined) {
-        if (!Array.isArray(body.otc_channels) || body.otc_channels.some((c) => typeof c !== 'string')) {
-          return { ok: false, error: 'svc_announce.otc_channels must be an array of strings' };
+      if (body.rfq_channels !== undefined) {
+        if (!Array.isArray(body.rfq_channels) || body.rfq_channels.some((c) => typeof c !== 'string')) {
+          return { ok: false, error: 'svc_announce.rfq_channels must be an array of strings' };
         }
       }
       if (body.note !== undefined && body.note !== null) {

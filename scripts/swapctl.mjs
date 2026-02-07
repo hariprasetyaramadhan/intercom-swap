@@ -41,7 +41,7 @@ Commands:
   send --channel <name> (--text <msg> | --json <obj|@file>)
 
 Service/presence announcements (signed swap envelopes):
-  svc-announce --channels <a,b,c> --name <label> [--pairs <p1,p2>] [--otc-channels <a,b,c>] [--note <text>] [--offers-json <json|@file>] [--trade-id <id>] [--ttl-sec <sec>] [--join 0|1]
+  svc-announce --channels <a,b,c> --name <label> [--pairs <p1,p2>] [--rfq-channels <a,b,c>] [--note <text>] [--offers-json <json|@file>] [--trade-id <id>] [--ttl-sec <sec>] [--join 0|1]
   svc-announce-loop --channels <a,b,c> --config <json|@file> [--interval-sec <sec>] [--watch 0|1] [--ttl-sec <sec>] [--trade-id <id>] [--join 0|1]
 
 Invite/Welcome helpers (signed by the peer via SC-Bridge sign):
@@ -49,11 +49,11 @@ Invite/Welcome helpers (signed by the peer via SC-Bridge sign):
   make-invite --channel <name> --invitee-pubkey <hex32> [--ttl-sec <sec>] [--welcome <b64|json|@file>]
 
 Swap message helpers (signed swap envelopes, sent over sidechannels):
-  rfq --channel <otcChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr> [--valid-until-unix <sec>]
-  quote --channel <otcChannel> --trade-id <id> --rfq-id <id> --btc-sats <n> --usdt-amount <atomicStr> --valid-until-unix <sec>
-  quote-from-rfq --channel <otcChannel> --rfq-json <envelope|@file> [--btc-sats <n>] [--usdt-amount <atomicStr>] [--valid-until-unix <sec>]
-  quote-accept --channel <otcChannel> --quote-json <envelope|@file>
-  swap-invite-from-accept --channel <otcChannel> --accept-json <envelope|@file> [--swap-channel <name>] [--welcome-text <text>] [--ttl-sec <sec>]
+  rfq --channel <rfqChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr> [--valid-until-unix <sec>]
+  quote --channel <rfqChannel> --trade-id <id> --rfq-id <id> --btc-sats <n> --usdt-amount <atomicStr> --valid-until-unix <sec>
+  quote-from-rfq --channel <rfqChannel> --rfq-json <envelope|@file> [--btc-sats <n>] [--usdt-amount <atomicStr>] [--valid-until-unix <sec>]
+  quote-accept --channel <rfqChannel> --quote-json <envelope|@file>
+  swap-invite-from-accept --channel <rfqChannel> --accept-json <envelope|@file> [--swap-channel <name>] [--welcome-text <text>] [--ttl-sec <sec>]
   join-from-swap-invite --swap-invite-json <envelope|@file>
   terms --channel <swapChannel> --trade-id <id> --btc-sats <n> --usdt-amount <atomicStr> --sol-mint <base58> --sol-recipient <base58> --sol-refund <base58> --sol-refund-after-unix <sec> --ln-receiver-peer <hex32> --ln-payer-peer <hex32> --platform-fee-bps <n> --trade-fee-bps <n> --trade-fee-collector <base58> [--platform-fee-collector <base58>] [--terms-valid-until-unix <sec>]
   accept --channel <swapChannel> --trade-id <id> (--terms-hash <hex> | --terms-json <envelope|@file>)
@@ -440,7 +440,7 @@ async function main() {
 
     const name = requireFlag(flags, 'name');
     const pairs = splitCsv(flags.get('pairs'));
-    const otcChannels = splitCsv(flags.get('otc-channels'));
+    const rfqChannels = splitCsv(flags.get('rfq-channels'));
     const note = flags.get('note') ? String(flags.get('note')) : null;
     const offers = parseJsonMaybeFile(flags.get('offers-json'));
     if (flags.get('offers-json') && !offers) die('Invalid --offers-json (expected JSON or @file)');
@@ -461,7 +461,7 @@ async function main() {
       body: {
         name,
         ...(pairs.length > 0 ? { pairs } : {}),
-        ...(otcChannels.length > 0 ? { otc_channels: otcChannels } : {}),
+        ...(rfqChannels.length > 0 ? { rfq_channels: rfqChannels } : {}),
         ...(note ? { note } : {}),
         ...(offers ? { offers } : {}),
         ...(validUntilUnix ? { valid_until_unix: validUntilUnix } : {}),
@@ -544,8 +544,8 @@ async function main() {
         const cfg = dirty || !lastCfg ? load() : lastCfg;
         const name = String(cfg.name || '').trim();
         const pairs = Array.isArray(cfg.pairs) ? cfg.pairs.map((p) => String(p)).filter(Boolean) : [];
-        const otcChannels = Array.isArray(cfg.otc_channels)
-          ? cfg.otc_channels.map((c) => String(c)).filter(Boolean)
+        const rfqChannels = Array.isArray(cfg.rfq_channels)
+          ? cfg.rfq_channels.map((c) => String(c)).filter(Boolean)
           : [];
         const note = cfg.note !== undefined && cfg.note !== null ? String(cfg.note) : null;
         const offers = cfg.offers !== undefined ? cfg.offers : null;
@@ -563,7 +563,7 @@ async function main() {
           body: {
             name,
             ...(pairs.length > 0 ? { pairs } : {}),
-            ...(otcChannels.length > 0 ? { otc_channels: otcChannels } : {}),
+            ...(rfqChannels.length > 0 ? { rfq_channels: rfqChannels } : {}),
             ...(note ? { note } : {}),
             ...(offers ? { offers } : {}),
             ...(validUntilUnix ? { valid_until_unix: validUntilUnix } : {}),

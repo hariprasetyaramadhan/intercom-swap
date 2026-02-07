@@ -1,6 +1,6 @@
 ---
 name: intercomswap
-description: Install and operate Intercom Swap: a fork of Intercom (upstream: https://github.com/Trac-Systems/intercom) that negotiates P2P OTC swaps over Intercom sidechannels and settles BTC(LN) <> USDT(Solana) via a shared Solana escrow program, with deterministic operator tooling, recovery, and unattended e2e tests.
+description: Install and operate Intercom Swap: a fork of Intercom (upstream: https://github.com/Trac-Systems/intercom) that negotiates P2P RFQ swaps over Intercom sidechannels and settles BTC(LN) <> USDT(Solana) via a shared Solana escrow program, with deterministic operator tooling, recovery, and unattended e2e tests.
 ---
 
 # Intercom Swap
@@ -82,7 +82,7 @@ This repo includes `scripts/swapctl.mjs` (with wrappers `scripts/swapctl.sh` and
   - includes `leave` to drop ephemeral channels from long-running peers
 - create owner-signed welcomes + invites (via SC-Bridge signing)
 - send signed swap messages with schema validation
-  - OTC: `rfq`, `quote`, `quote-accept`, `swap-invite-from-accept`, `join-from-swap-invite`
+  - RFQ negotiation: `rfq`, `quote`, `quote-accept`, `swap-invite-from-accept`, `join-from-swap-invite`
   - Presence: `svc-announce`, `svc-announce-loop` (signed service/offers announcements for rendezvous)
   - swap: `terms`, `accept`
 - convenience: build + send a quote directly from an RFQ envelope (`quote-from-rfq`)
@@ -127,10 +127,10 @@ This repo also provides dev-oriented role scripts:
 - `scripts/run-swap-maker.sh`, `scripts/run-swap-maker.ps1`
 - `scripts/run-swap-taker.sh`, `scripts/run-swap-taker.ps1`
 
-This repo also provides long-running OTC “agent bots” that sit in an OTC channel, negotiate, and then hand off into a per-trade invite-only `swap:<id>` channel:
-- `scripts/otc-maker.mjs`: listens for `swap.rfq`, replies with `swap.quote`, and on `swap.quote_accept` sends a `swap.swap_invite` (welcome+invite) and joins the `swap:<id>` channel.
+This repo also provides long-running RFQ “agent bots” that sit in an RFQ channel, negotiate, and then hand off into a per-trade invite-only `swap:<id>` channel:
+- `scripts/rfq-maker.mjs`: listens for `swap.rfq`, replies with `swap.quote`, and on `swap.quote_accept` sends a `swap.swap_invite` (welcome+invite) and joins the `swap:<id>` channel.
   - With `--run-swap 1`, it also runs the **full swap state machine** inside the `swap:<id>` invite-only channel (terms -> invoice -> escrow).
-- `scripts/otc-taker.mjs`: sends a `swap.rfq`, waits for a `swap.quote`, sends `swap.quote_accept`, waits for `swap.swap_invite`, then joins the `swap:<id>` channel.
+- `scripts/rfq-taker.mjs`: sends a `swap.rfq`, waits for a `swap.quote`, sends `swap.quote_accept`, waits for `swap.swap_invite`, then joins the `swap:<id>` channel.
   - With `--run-swap 1`, it also runs the **full swap state machine** (accept -> verify escrow on-chain -> pay LN -> claim Solana escrow).
 
 `--run-swap 1` requires:
@@ -149,10 +149,14 @@ These bots are designed for:
 - “sit in channel all day” operation (default: run forever)
 
 To avoid copy/pasting SC-Bridge URLs/tokens for the bots, use:
-- `scripts/otc-maker-peer.sh`, `scripts/otc-maker-peer.ps1`
-- `scripts/otc-taker-peer.sh`, `scripts/otc-taker-peer.ps1`
+- `scripts/rfq-maker-peer.sh`, `scripts/rfq-maker-peer.ps1`
+- `scripts/rfq-taker-peer.sh`, `scripts/rfq-taker-peer.ps1`
 
 These wrappers also set `--receipts-db onchain/receipts/<store>.sqlite` by default (local-only; gitignored) so swaps have a recovery path.
+
+For tool-call friendly lifecycle control (start/stop/restart specific bot instances without stopping the peer), use:
+- `scripts/rfqbotmgr.mjs` (wrappers: `scripts/rfqbotmgr.sh`, `scripts/rfqbotmgr.ps1`)
+  - stores state + logs under `onchain/rfq-bots/` (gitignored)
 
 To avoid copy/pasting SC-Bridge URLs/tokens, use the wrappers that read the token from `onchain/sc-bridge/<store>.token`:
 - `scripts/swapctl-peer.sh <storeName> <scBridgePort> ...`
@@ -804,7 +808,7 @@ Hard rule: **no escrow verified, no LN payment sent**. If escrow is unavailable,
 ### Trading Rendezvous Channel
 Use a dedicated swap rendezvous channel (instead of `0000intercom`) for RFQs/quotes:
 - Recommended: `0000intercomswapbtcusdt`
-- All `otc-*` scripts default to `--otc-channel 0000intercomswapbtcusdt` unless overridden.
+- All `rfq-*` scripts default to `--rfq-channel 0000intercomswapbtcusdt` unless overridden.
 
 ### Solana Escrow Program (Shared, Do Not Deploy Your Own On Mainnet)
 For production on Solana **mainnet**, this project uses one shared program deployment that everyone points to:
@@ -895,12 +899,12 @@ SC-Bridge RPC:
 - Clients: `ScBridgeClient.priceGet()`.
 
 Bot guardrails (defaults are fail-closed):
-- Maker: `scripts/otc-maker.mjs`
+- Maker: `scripts/rfq-maker.mjs`
   - `--price-guard 0|1` (default `1`)
   - `--price-max-age-ms <ms>` (default `15000`)
   - `--maker-spread-bps <bps>` (default `0`): counterquote discount vs oracle price
   - `--maker-max-overpay-bps <bps>` (default `0`): if RFQ implies a price above oracle by more than this, maker counterquotes instead of echoing the RFQ
-- Taker: `scripts/otc-taker.mjs`
+- Taker: `scripts/rfq-taker.mjs`
   - `--price-guard 0|1` (default `1`)
   - `--price-max-age-ms <ms>` (default `15000`)
   - `--taker-max-discount-bps <bps>` (default `200`): reject quotes and abort before LN pay if implied price is below oracle by more than this
@@ -938,7 +942,7 @@ What `npm run test:e2e` does:
   - `alice`: service/escrow depositor + LN invoice receiver (channel owner).
   - `bob`: client/LN payer + escrow claimer (has an invite).
   - `eve`: uninvited peer that joins the swap topic; must receive **zero** swap messages (confidentiality regression test).
-- Runs the OTC maker/taker bots (`scripts/otc-maker.mjs`, `scripts/otc-taker.mjs`) in `--run-swap 1` mode to execute the full swap inside the invite-only swap channel.
+- Runs the RFQ maker/taker bots (`scripts/rfq-maker.mjs`, `scripts/rfq-taker.mjs`) in `--run-swap 1` mode to execute the full swap inside the invite-only swap channel.
 
 ### Production Notes (Not Implemented Here Yet)
 - Lightning mainnet/testnet: run your own CLN/LND and connect via local RPC credentials stored under `onchain/`.
@@ -1090,8 +1094,7 @@ cat > onchain/announce/swap-maker.json <<'JSON'
 {
   "name": "swap-maker",
   "pairs": ["BTC_LN/USDT_SOL"],
-  "otc_channels": ["0000intercomswapbtcusdt"],
-  "note": "Have USDT(SOL), want BTC(LN). RFQ me in 0000intercomswapbtcusdt.",
+  "rfq_channels": ["0000intercomswapbtcusdt"],
   "offers": [
     { "have": "USDT_SOL", "want": "BTC_LN", "pair": "BTC_LN/USDT_SOL" }
   ]
@@ -1105,8 +1108,8 @@ scripts/swapctl-peer.sh swap-maker 49222 svc-announce-loop \
   --interval-sec 30 \
   --watch 1
 
-# Start OTC bots (pass the live RPC + keypairs + mint; both default to otc-channel 0000intercomswapbtcusdt)
-scripts/otc-maker-peer.sh swap-maker 49222 \
+# Start RFQ bots (pass the live RPC + keypairs + mint; both default to rfq-channel 0000intercomswapbtcusdt)
+scripts/rfq-maker-peer.sh swap-maker 49222 \
   --run-swap 1 \
   --ln-impl lnd --ln-backend cli --ln-network mainnet \
   --lnd-dir onchain/lnd/mainnet/maker --lnd-rpcserver 127.0.0.1:10009 \
@@ -1117,7 +1120,7 @@ scripts/otc-maker-peer.sh swap-maker 49222 \
 # Optional Solana priority fees (during congestion): add
 #   --solana-cu-limit 200000 --solana-cu-price 1000
 
-scripts/otc-taker-peer.sh swap-taker 49223 \
+scripts/rfq-taker-peer.sh swap-taker 49223 \
   --run-swap 1 \
   --ln-impl lnd --ln-backend cli --ln-network mainnet \
   --lnd-dir onchain/lnd/mainnet/taker --lnd-rpcserver 127.0.0.1:10010 \
@@ -1141,8 +1144,7 @@ New-Item -ItemType Directory -Force -Path "onchain/announce" | Out-Null
 {
   "name": "swap-maker",
   "pairs": ["BTC_LN/USDT_SOL"],
-  "otc_channels": ["0000intercomswapbtcusdt"],
-  "note": "Have USDT(SOL), want BTC(LN). RFQ me in 0000intercomswapbtcusdt.",
+  "rfq_channels": ["0000intercomswapbtcusdt"],
   "offers": [
     { "have": "USDT_SOL", "want": "BTC_LN", "pair": "BTC_LN/USDT_SOL" }
   ]

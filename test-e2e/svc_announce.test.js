@@ -182,7 +182,7 @@ test('e2e: svc_announce re-broadcast reaches late joiners', async (t) => {
       {
         name: `svc-${runId}`,
         pairs: ['BTC_LN/USDT_SOL'],
-        otc_channels: ['0000intercomswapbtcusdt'],
+        rfq_channels: ['0000intercomswapbtcusdt'],
         note: `e2e ${runId}`,
         offers: [{ have: 'USDT_SOL', want: 'BTC_LN', pair: 'BTC_LN/USDT_SOL' }],
       },
@@ -269,4 +269,3 @@ test('e2e: svc_announce re-broadcast reaches late joiners', async (t) => {
 
   listenerSc.close();
 });
-

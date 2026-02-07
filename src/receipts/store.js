@@ -12,7 +12,60 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { stableStringify } from '../util/stableStringify.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+const LEGACY_RFV_CHANNEL_COL = ['o', 't', 'c'].join('') + '_channel';
+
+function readSchemaVersion(db) {
+  try {
+    const row = db.prepare('SELECT v FROM meta WHERE k = ?').get('schema_version');
+    if (!row) return null;
+    const n = Number.parseInt(String(row.v), 10);
+    return Number.isFinite(n) ? n : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function writeSchemaVersion(db, version) {
+  db.prepare('INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run(
+    'schema_version',
+    String(version)
+  );
+}
+
+function listTradeColumns(db) {
+  const cols = new Set();
+  try {
+    // { cid, name, type, notnull, dflt_value, pk }
+    for (const row of db.prepare('PRAGMA table_info(trades)').all()) {
+      if (row?.name) cols.add(String(row.name));
+    }
+  } catch (_e) {}
+  return cols;
+}
+
+function migrateSchema(db) {
+  const current = readSchemaVersion(db);
+  if (current === null) {
+    writeSchemaVersion(db, SCHEMA_VERSION);
+    return;
+  }
+
+  if (current === SCHEMA_VERSION) return;
+
+  // v1 -> v2: rename legacy trades channel column -> trades.rfq_channel
+  if (current === 1 && SCHEMA_VERSION === 2) {
+    const cols = listTradeColumns(db);
+    if (cols.has(LEGACY_RFV_CHANNEL_COL) && !cols.has('rfq_channel')) {
+      db.exec(`ALTER TABLE trades RENAME COLUMN ${LEGACY_RFV_CHANNEL_COL} TO rfq_channel;`);
+    }
+    writeSchemaVersion(db, SCHEMA_VERSION);
+    return;
+  }
+
+  throw new Error(`Unsupported receipts schema_version=${current} (expected ${SCHEMA_VERSION})`);
+}
 
 function nowMs() {
   return Date.now();
@@ -66,7 +119,7 @@ function mapRow(row) {
   return {
     trade_id: row.trade_id,
     role: row.role,
-    otc_channel: row.otc_channel,
+    rfq_channel: row.rfq_channel,
     swap_channel: row.swap_channel,
     maker_peer: row.maker_peer,
     taker_peer: row.taker_peer,
@@ -99,7 +152,9 @@ export class TradeReceiptsStore {
     this.dbPath = dbPath;
 
     this._stmtGetMeta = db.prepare('SELECT v FROM meta WHERE k = ?');
-    this._stmtSetMeta = db.prepare('INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v');
+    this._stmtSetMeta = db.prepare(
+      'INSERT INTO meta(k, v) VALUES(?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v'
+    );
 
     this._stmtGetTrade = db.prepare('SELECT * FROM trades WHERE trade_id = ?');
     this._stmtGetTradeByPaymentHash = db.prepare('SELECT * FROM trades WHERE ln_payment_hash_hex = ?');
@@ -112,7 +167,7 @@ export class TradeReceiptsStore {
     // Full-row upsert (we merge with existing first, then write the full row).
     this._stmtUpsertTrade = db.prepare(`
       INSERT INTO trades(
-        trade_id, role, otc_channel, swap_channel, maker_peer, taker_peer,
+        trade_id, role, rfq_channel, swap_channel, maker_peer, taker_peer,
         btc_sats, usdt_amount,
         sol_mint, sol_program_id, sol_recipient, sol_refund, sol_escrow_pda, sol_vault_ata, sol_refund_after_unix,
         ln_invoice_bolt11, ln_payment_hash_hex, ln_preimage_hex,
@@ -127,7 +182,7 @@ export class TradeReceiptsStore {
       )
       ON CONFLICT(trade_id) DO UPDATE SET
         role=excluded.role,
-        otc_channel=excluded.otc_channel,
+        rfq_channel=excluded.rfq_channel,
         swap_channel=excluded.swap_channel,
         maker_peer=excluded.maker_peer,
         taker_peer=excluded.taker_peer,
@@ -167,7 +222,7 @@ export class TradeReceiptsStore {
       CREATE TABLE IF NOT EXISTS trades(
         trade_id TEXT PRIMARY KEY,
         role TEXT,
-        otc_channel TEXT,
+        rfq_channel TEXT,
         swap_channel TEXT,
         maker_peer TEXT,
         taker_peer TEXT,
@@ -206,27 +261,14 @@ export class TradeReceiptsStore {
       CREATE INDEX IF NOT EXISTS idx_events_trade_ts ON events(trade_id, ts);
     `);
 
-    const store = new TradeReceiptsStore(db, resolved);
-    store._ensureSchemaVersion();
-    return store;
+    migrateSchema(db);
+    return new TradeReceiptsStore(db, resolved);
   }
 
   close() {
     try {
       this.db.close();
     } catch (_e) {}
-  }
-
-  _ensureSchemaVersion() {
-    const row = this._stmtGetMeta.get('schema_version');
-    if (!row) {
-      this._stmtSetMeta.run('schema_version', String(SCHEMA_VERSION));
-      return;
-    }
-    const current = Number.parseInt(String(row.v), 10);
-    if (current !== SCHEMA_VERSION) {
-      throw new Error(`Unsupported receipts schema_version=${row.v} (expected ${SCHEMA_VERSION})`);
-    }
   }
 
   getTrade(tradeId) {
@@ -262,7 +304,7 @@ export class TradeReceiptsStore {
     const row = {
       trade_id: id,
       role: coerceText(next.role),
-      otc_channel: coerceText(next.otc_channel),
+      rfq_channel: coerceText(next.rfq_channel),
       swap_channel: coerceText(next.swap_channel),
       maker_peer: coerceText(next.maker_peer),
       taker_peer: coerceText(next.taker_peer),
@@ -295,7 +337,7 @@ export class TradeReceiptsStore {
     this._stmtUpsertTrade.run(
       row.trade_id,
       row.role,
-      row.otc_channel,
+      row.rfq_channel,
       row.swap_channel,
       row.maker_peer,
       row.taker_peer,

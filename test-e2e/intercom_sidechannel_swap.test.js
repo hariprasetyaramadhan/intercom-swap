@@ -350,7 +350,7 @@ async function sendUntilReceived({
 test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) => {
   const runId = crypto.randomBytes(4).toString('hex');
   const tradeId = `swap_e2e_${runId}`;
-  const otcChannel = `btc-usdt-sol-otc-${runId}`;
+  const rfqChannel = `btc-usdt-sol-rfq-${runId}`;
   const swapChannel = `swap:${tradeId}`;
 
   // Avoid relying on external DHT bootstrap nodes for e2e reliability.
@@ -503,12 +503,12 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
 
   const signAliceHex = (payload) => signPayloadHex(payload, aliceKeys.secHex);
 
-  // Pre-sign a welcome for the OTC channel (startup requirement for welcome enforcement).
-  const otcWelcome = createSignedWelcome(
-    { channel: otcChannel, ownerPubKey: aliceKeys.pubHex, text: `otc ${runId}` },
+  // Pre-sign a welcome for the RFQ channel (startup requirement for welcome enforcement).
+  const rfqWelcome = createSignedWelcome(
+    { channel: rfqChannel, ownerPubKey: aliceKeys.pubHex, text: `rfq ${runId}` },
     signAliceHex
   );
-  const otcWelcomeB64 = toB64Json(otcWelcome);
+  const rfqWelcomeB64 = toB64Json(rfqWelcome);
 
   const aliceTokenWs = `token-alice-${runId}`;
   const bobTokenWs = `token-bob-${runId}`;
@@ -549,7 +549,7 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
       '--sc-bridge-port',
       String(alicePort),
       '--sidechannels',
-      otcChannel,
+      rfqChannel,
       '--sidechannel-pow',
       '0',
       '--sidechannel-invite-required',
@@ -559,11 +559,11 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
       '--sidechannel-inviter-keys',
       aliceKeys.pubHex,
       '--sidechannel-owner',
-      `${otcChannel}:${aliceKeys.pubHex}`,
+      `${rfqChannel}:${aliceKeys.pubHex}`,
       '--sidechannel-default-owner',
       aliceKeys.pubHex,
       '--sidechannel-welcome',
-      `${otcChannel}:b64:${otcWelcomeB64}`,
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
     ],
     { label: 'alice' }
   );
@@ -599,7 +599,7 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
       '--sc-bridge-port',
       String(bobPort),
       '--sidechannels',
-      otcChannel,
+      rfqChannel,
       '--sidechannel-pow',
       '0',
       '--sidechannel-invite-required',
@@ -609,11 +609,11 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
       '--sidechannel-inviter-keys',
       aliceKeys.pubHex,
       '--sidechannel-owner',
-      `${otcChannel}:${aliceKeys.pubHex}`,
+      `${rfqChannel}:${aliceKeys.pubHex}`,
       '--sidechannel-default-owner',
       aliceKeys.pubHex,
       '--sidechannel-welcome',
-      `${otcChannel}:b64:${otcWelcomeB64}`,
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
     ],
     { label: 'bob' }
   );
@@ -667,22 +667,22 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
     aliceSc.close();
   });
 
-  await aliceSc.subscribe([otcChannel, swapChannel]);
-  await bobSc.subscribe([otcChannel, swapChannel]);
+  await aliceSc.subscribe([rfqChannel, swapChannel]);
+  await bobSc.subscribe([rfqChannel, swapChannel]);
   await eveSc.subscribe([swapChannel]);
 
-  // Collect messages early; we use OTC pings to ensure peers are connected before the swap.
+  // Collect messages early; we use RFQ pings to ensure peers are connected before the swap.
   const seen = {
-    alice: { otc: [], swap: [] },
-    bob: { otc: [], swap: [] },
+    alice: { rfq: [], swap: [] },
+    bob: { rfq: [], swap: [] },
     eve: { swap: [] },
   };
   aliceSc.on('sidechannel_message', (evt) => {
-    if (evt.channel === otcChannel) seen.alice.otc.push(evt.message);
+    if (evt.channel === rfqChannel) seen.alice.rfq.push(evt.message);
     if (evt.channel === swapChannel) seen.alice.swap.push(evt.message);
   });
   bobSc.on('sidechannel_message', (evt) => {
-    if (evt.channel === otcChannel) seen.bob.otc.push(evt.message);
+    if (evt.channel === rfqChannel) seen.bob.rfq.push(evt.message);
     if (evt.channel === swapChannel) seen.bob.swap.push(evt.message);
   });
   eveSc.on('sidechannel_message', (evt) => {
@@ -703,13 +703,13 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
 
   const makerBot = spawnBot(
     [
-      'scripts/otc-maker.mjs',
+      'scripts/rfq-maker.mjs',
       '--url',
       `ws://127.0.0.1:${alicePort}`,
       '--token',
       aliceTokenWs,
-      '--otc-channel',
-      otcChannel,
+      '--rfq-channel',
+      rfqChannel,
       '--once',
       '1',
       '--receipts-db',
@@ -740,13 +740,13 @@ test('e2e: sidechannel swap protocol + LN regtest + Solana escrow', async (t) =>
 
   const takerBot = spawnBot(
     [
-      'scripts/otc-taker.mjs',
+      'scripts/rfq-taker.mjs',
       '--url',
       `ws://127.0.0.1:${bobPort}`,
       '--token',
       bobTokenWs,
-      '--otc-channel',
-      otcChannel,
+      '--rfq-channel',
+      rfqChannel,
       '--trade-id',
       tradeId,
       '--btc-sats',

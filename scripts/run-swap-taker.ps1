@@ -9,7 +9,7 @@ Set-Location $root
 #
 # Usage:
 #   $env:SWAP_INVITER_KEYS = "<makerPeerPubkeyHex[,more]>"
-#   .\\scripts\\run-swap-taker.ps1 [storeName] [scBridgePort] [otcChannel]
+#   .\\scripts\\run-swap-taker.ps1 [storeName] [scBridgePort] [rfqChannel]
 
 $inviterKeys = if ($env:SWAP_INVITER_KEYS) { [string]$env:SWAP_INVITER_KEYS } else { "" }
 if (-not $inviterKeys) {
@@ -18,7 +18,7 @@ if (-not $inviterKeys) {
 
 $storeName = if ($args.Length -ge 1 -and $args[0]) { [string]$args[0] } else { "swap-taker" }
 $scPort = if ($args.Length -ge 2 -and $args[1]) { [string]$args[1] } else { "49223" }
-$otcChannel = if ($args.Length -ge 3 -and $args[2]) { [string]$args[2] } else { "0000intercomswapbtcusdt" }
+$rfqChannel = if ($args.Length -ge 3 -and $args[2]) { [string]$args[2] } else { "0000intercomswapbtcusdt" }
 
 $sidechannelPow = if ($env:SIDECHANNEL_POW) { [string]$env:SIDECHANNEL_POW } else { "1" }
 $sidechannelPowDifficulty = if ($env:SIDECHANNEL_POW_DIFFICULTY) { [string]$env:SIDECHANNEL_POW_DIFFICULTY } else { "12" }
@@ -41,7 +41,7 @@ pear run . `
   --sc-bridge 1 `
   --sc-bridge-token $scToken `
   --sc-bridge-port $scPort `
-  --sidechannels $otcChannel `
+  --sidechannels $rfqChannel `
   --sidechannel-pow $sidechannelPow `
   --sidechannel-pow-difficulty $sidechannelPowDifficulty `
   --sidechannel-welcome-required 0 `

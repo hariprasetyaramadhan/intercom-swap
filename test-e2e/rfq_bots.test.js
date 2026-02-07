@@ -132,9 +132,9 @@ function parseJsonLines(text) {
   return events;
 }
 
-test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel invites)', async (t) => {
+test('e2e: RFQ maker/taker bots negotiate and join swap channel (sidechannel invites)', async (t) => {
   const runId = crypto.randomBytes(4).toString('hex');
-  const otcChannel = `btc-usdt-sol-otc-${runId}`;
+  const rfqChannel = `btc-usdt-sol-rfq-${runId}`;
 
   // Local DHT bootstrapper for reliability (avoid public bootstrap nodes).
   const dhtPort = 30000 + crypto.randomInt(0, 10000);
@@ -148,18 +148,18 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
   });
 
   const storesDir = path.join(repoRoot, 'stores');
-  const makerStore = `e2e-otc-maker-${runId}`;
-  const takerStore = `e2e-otc-taker-${runId}`;
+  const makerStore = `e2e-rfq-maker-${runId}`;
+  const takerStore = `e2e-rfq-taker-${runId}`;
 
   const makerKeys = await writePeerKeypair({ storesDir, storeName: makerStore });
   await writePeerKeypair({ storesDir, storeName: takerStore });
 
   const signMakerHex = (payload) => signPayloadHex(payload, makerKeys.secHex);
-  const otcWelcome = createSignedWelcome(
-    { channel: otcChannel, ownerPubKey: makerKeys.pubHex, text: `otc ${runId}` },
+  const rfqWelcome = createSignedWelcome(
+    { channel: rfqChannel, ownerPubKey: makerKeys.pubHex, text: `rfq ${runId}` },
     signMakerHex
   );
-  const otcWelcomeB64 = toB64Json(otcWelcome);
+  const rfqWelcomeB64 = toB64Json(rfqWelcome);
 
   const makerToken = `token-maker-${runId}`;
   const takerToken = `token-taker-${runId}`;
@@ -194,7 +194,7 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
       '--sc-bridge-port',
       String(makerPort),
       '--sidechannels',
-      otcChannel,
+      rfqChannel,
       '--sidechannel-pow',
       '0',
       '--sidechannel-invite-required',
@@ -204,11 +204,11 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
       '--sidechannel-inviter-keys',
       makerKeys.pubHex,
       '--sidechannel-owner',
-      `${otcChannel}:${makerKeys.pubHex}`,
+      `${rfqChannel}:${makerKeys.pubHex}`,
       '--sidechannel-default-owner',
       makerKeys.pubHex,
       '--sidechannel-welcome',
-      `${otcChannel}:b64:${otcWelcomeB64}`,
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
     ],
     { label: 'maker' }
   );
@@ -240,7 +240,7 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
       '--sc-bridge-port',
       String(takerPort),
       '--sidechannels',
-      otcChannel,
+      rfqChannel,
       '--sidechannel-pow',
       '0',
       '--sidechannel-invite-required',
@@ -250,11 +250,11 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
       '--sidechannel-inviter-keys',
       makerKeys.pubHex,
       '--sidechannel-owner',
-      `${otcChannel}:${makerKeys.pubHex}`,
+      `${rfqChannel}:${makerKeys.pubHex}`,
       '--sidechannel-default-owner',
       makerKeys.pubHex,
       '--sidechannel-welcome',
-      `${otcChannel}:b64:${otcWelcomeB64}`,
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
     ],
     { label: 'taker' }
   );
@@ -285,13 +285,13 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
 
   const makerBot = spawnBot(
     [
-      'scripts/otc-maker.mjs',
+      'scripts/rfq-maker.mjs',
       '--url',
       `ws://127.0.0.1:${makerPort}`,
       '--token',
       makerToken,
-      '--otc-channel',
-      otcChannel,
+      '--rfq-channel',
+      rfqChannel,
       '--once',
       '1',
     ],
@@ -300,13 +300,13 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
 
   const takerBot = spawnBot(
     [
-      'scripts/otc-taker.mjs',
+      'scripts/rfq-taker.mjs',
       '--url',
       `ws://127.0.0.1:${takerPort}`,
       '--token',
       takerToken,
-      '--otc-channel',
-      otcChannel,
+      '--rfq-channel',
+      rfqChannel,
       '--once',
       '1',
       '--timeout-sec',
@@ -336,7 +336,7 @@ test('e2e: OTC maker/taker bots negotiate and join swap channel (sidechannel inv
     const stats = await takerSc2.stats();
     assert.equal(stats.type, 'stats');
     assert.ok(Array.isArray(stats.channels));
-    assert.ok(stats.channels.includes(otcChannel), 'OTC channel should remain joined');
+    assert.ok(stats.channels.includes(rfqChannel), 'RFQ channel should remain joined');
     if (stats.channels.includes(swapChannel)) {
       throw new Error(`still joined swap channel: ${swapChannel}`);
     }
