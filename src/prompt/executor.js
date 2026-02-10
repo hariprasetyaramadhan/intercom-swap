@@ -8,12 +8,15 @@ const execFileP = promisify(execFile);
 
 import { Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import {
-  createAssociatedTokenAccount,
-  createMint,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  MINT_SIZE,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMintInstruction,
+  createMintToInstruction,
+  createTransferInstruction,
   getAccount,
   getAssociatedTokenAddress,
-  mintTo,
-  transfer as splTransfer,
 } from '@solana/spl-token';
 
 import { ScBridgeClient } from '../sc-bridge/client.js';
@@ -67,6 +70,7 @@ import {
   withdrawFeesTx,
   withdrawTradeFeesTx,
 } from '../solana/lnUsdtEscrowClient.js';
+import { buildComputeBudgetIxs } from '../solana/computeBudget.js';
 import { isSecretHandle } from './secrets.js';
 
 function isObject(v) {
@@ -300,7 +304,7 @@ async function sendAndConfirm(connection, tx, commitment) {
   return sig;
 }
 
-async function getOrCreateAta(connection, payerKeypair, owner, mint, commitment) {
+async function getOrCreateAta(connection, payerKeypair, owner, mint, commitment, { computeUnitLimit = null, computeUnitPriceMicroLamports = null } = {}) {
   const ata = await getAssociatedTokenAddress(mint, owner, true);
   try {
     await getAccount(connection, ata, commitment);
@@ -308,7 +312,24 @@ async function getOrCreateAta(connection, payerKeypair, owner, mint, commitment)
   } catch (_e) {
     // createAssociatedTokenAccount will throw if ATA exists; retrying is fine.
   }
-  await createAssociatedTokenAccount(connection, payerKeypair, mint, owner);
+  try {
+    const tx = new Transaction();
+    for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+    tx.add(createAssociatedTokenAccountInstruction(payerKeypair.publicKey, ata, owner, mint, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID));
+    tx.feePayer = payerKeypair.publicKey;
+    const latest = await connection.getLatestBlockhash(commitment);
+    tx.recentBlockhash = latest.blockhash;
+    tx.sign(payerKeypair);
+    await sendAndConfirm(connection, tx, commitment);
+  } catch (_e2) {
+    // If it raced with another tx, treat "already in use" as success.
+    try {
+      await getAccount(connection, ata, commitment);
+      return ata;
+    } catch (_e3) {
+      throw _e2;
+    }
+  }
   return ata;
 }
 
@@ -424,13 +445,22 @@ export class ToolExecutor {
     this._scLogWaiters = new Set(); // { sinceSeq, resolve, timer }
 
     this._peerSigning = null; // { pubHex, secHex }
-    this._solanaKeypair = null;
-    this._solanaPool = null;
+	    this._solanaKeypair = null;
+	    this._solanaPool = null;
 
-    this._autopost = new AutopostManager({
-      runTool: async ({ tool, args }) => this.execute(tool, args, { autoApprove: true, dryRun: false, secrets: null }),
-    });
-  }
+	    this._autopost = new AutopostManager({
+	      runTool: async ({ tool, args }) => this.execute(tool, args, { autoApprove: true, dryRun: false, secrets: null }),
+	      getTrade: async (tradeId) => {
+	        const store = await this._openReceiptsStore({ required: false });
+	        if (!store) return null;
+	        try {
+	          return store.getTrade(tradeId);
+	        } finally {
+	          store.close();
+	        }
+	      },
+	    });
+	  }
 
   _pool() {
     if (this._solanaPool) return this._solanaPool;
@@ -454,6 +484,25 @@ export class ToolExecutor {
       computeUnitLimit: this.solana?.computeUnitLimit ?? null,
       computeUnitPriceMicroLamports: this.solana?.computeUnitPriceMicroLamports ?? null,
     };
+  }
+
+  _computeBudgetWithOverrides(args, toolName) {
+    const base = this._computeBudget();
+    let computeUnitLimit = base.computeUnitLimit ?? null;
+    let computeUnitPriceMicroLamports = base.computeUnitPriceMicroLamports ?? null;
+
+    if (args && typeof args === 'object') {
+      if ('cu_limit' in args) {
+        const raw = expectOptionalInt(args, toolName, 'cu_limit', { min: 0, max: 1_400_000 });
+        computeUnitLimit = raw && raw > 0 ? raw : null;
+      }
+      if ('cu_price' in args) {
+        const raw = expectOptionalInt(args, toolName, 'cu_price', { min: 0, max: 1_000_000_000 });
+        computeUnitPriceMicroLamports = raw && raw > 0 ? raw : null;
+      }
+    }
+
+    return { computeUnitLimit, computeUnitPriceMicroLamports };
   }
 
   _requireSolanaSigner() {
@@ -1504,7 +1553,7 @@ export class ToolExecutor {
         return { type: 'offer_posted', channels, rfq_channels: rfqChannels, svc_announce_id: svcAnnounceId, envelope: signed };
       });
     }
-    if (toolName === 'intercomswap_rfq_post') {
+	    if (toolName === 'intercomswap_rfq_post') {
       assertAllowedKeys(args, toolName, [
         'channel',
         'trade_id',
@@ -1537,7 +1586,7 @@ export class ToolExecutor {
       const validUntil = expectOptionalInt(args, toolName, 'valid_until_unix', { min: 1 });
       const appHash = deriveIntercomswapAppHash({ solanaProgramId: this._programId().toBase58() });
 
-      const unsigned = createUnsignedEnvelope({
+	      const unsigned = createUnsignedEnvelope({
         v: 1,
         kind: KIND.RFQ,
         tradeId,
@@ -1555,17 +1604,41 @@ export class ToolExecutor {
           ...(validUntil ? { valid_until_unix: validUntil } : {}),
         },
       });
-      const rfqId = hashUnsignedEnvelope(unsigned);
+	      const rfqId = hashUnsignedEnvelope(unsigned);
 
-      if (dryRun) return { type: 'dry_run', tool: toolName, channel, rfq_id: rfqId, unsigned };
+	      if (dryRun) return { type: 'dry_run', tool: toolName, channel, rfq_id: rfqId, unsigned };
 
-      const signing = await this._requirePeerSigning();
-      return withScBridge(this.scBridge, async (sc) => {
-        const signed = signSwapEnvelope(unsigned, signing);
-        await this._sendEnvelopeLogged(sc, channel, signed);
-        return { type: 'rfq_posted', channel, rfq_id: rfqId, envelope: signed };
-      });
-    }
+	      const store = await this._openReceiptsStore({ required: false });
+	      try {
+	        const signing = await this._requirePeerSigning();
+	        return await withScBridge(this.scBridge, async (sc) => {
+	          const signed = signSwapEnvelope(unsigned, signing);
+	          await this._sendEnvelopeLogged(sc, channel, signed);
+	          try {
+	            if (store) {
+	              store.upsertTrade(tradeId, {
+	                role: 'taker',
+	                rfq_channel: channel,
+	                btc_sats: btcSats,
+	                usdt_amount: usdtAmount,
+	                state: 'rfq',
+	                last_error: null,
+	              });
+	              store.appendEvent(tradeId, 'rfq_posted', {
+	                channel,
+	                rfq_id: rfqId,
+	                btc_sats: btcSats,
+	                usdt_amount: usdtAmount,
+	                valid_until_unix: validUntil || null,
+	              });
+	            }
+	          } catch (_e) {}
+	          return { type: 'rfq_posted', channel, rfq_id: rfqId, envelope: signed };
+	        });
+	      } finally {
+	        if (store) store.close();
+	      }
+	    }
 
     if (toolName === 'intercomswap_quote_post') {
       assertAllowedKeys(args, toolName, [
@@ -1705,6 +1778,31 @@ export class ToolExecutor {
       const platformFeeBps = Number(fees.platformFeeBps || 0);
       const tradeFeeBps = Number(fees.tradeFeeBps || 0);
       if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
+
+      // Guardrails: RFQ can include fee ceilings (max_*_bps). If current on-chain fees exceed them, do not quote.
+      const rfqMaxPlatformFeeBpsRaw = rfq?.body?.max_platform_fee_bps;
+      const rfqMaxTradeFeeBpsRaw = rfq?.body?.max_trade_fee_bps;
+      const rfqMaxTotalFeeBpsRaw = rfq?.body?.max_total_fee_bps;
+      const rfqMaxPlatformFeeBps =
+        rfqMaxPlatformFeeBpsRaw !== undefined && rfqMaxPlatformFeeBpsRaw !== null
+          ? Number.parseInt(String(rfqMaxPlatformFeeBpsRaw), 10)
+          : 500;
+      const rfqMaxTradeFeeBps =
+        rfqMaxTradeFeeBpsRaw !== undefined && rfqMaxTradeFeeBpsRaw !== null ? Number.parseInt(String(rfqMaxTradeFeeBpsRaw), 10) : 1000;
+      const rfqMaxTotalFeeBps =
+        rfqMaxTotalFeeBpsRaw !== undefined && rfqMaxTotalFeeBpsRaw !== null ? Number.parseInt(String(rfqMaxTotalFeeBpsRaw), 10) : 1500;
+      if (!Number.isFinite(rfqMaxPlatformFeeBps) || rfqMaxPlatformFeeBps < 0 || rfqMaxPlatformFeeBps > 500) {
+        throw new Error(`${toolName}: rfq_envelope.body.max_platform_fee_bps invalid`);
+      }
+      if (!Number.isFinite(rfqMaxTradeFeeBps) || rfqMaxTradeFeeBps < 0 || rfqMaxTradeFeeBps > 1000) {
+        throw new Error(`${toolName}: rfq_envelope.body.max_trade_fee_bps invalid`);
+      }
+      if (!Number.isFinite(rfqMaxTotalFeeBps) || rfqMaxTotalFeeBps < 0 || rfqMaxTotalFeeBps > 1500) {
+        throw new Error(`${toolName}: rfq_envelope.body.max_total_fee_bps invalid`);
+      }
+      if (platformFeeBps > rfqMaxPlatformFeeBps) throw new Error(`${toolName}: on-chain platform fee exceeds RFQ max_platform_fee_bps`);
+      if (tradeFeeBps > rfqMaxTradeFeeBps) throw new Error(`${toolName}: on-chain trade fee exceeds RFQ max_trade_fee_bps`);
+      if (platformFeeBps + tradeFeeBps > rfqMaxTotalFeeBps) throw new Error(`${toolName}: on-chain total fee exceeds RFQ max_total_fee_bps`);
 
       const appHash = deriveIntercomswapAppHash({ solanaProgramId: programId.toBase58() });
       const rfqAppHash = String(rfq?.body?.app_hash || '').trim().toLowerCase();
@@ -2811,18 +2909,20 @@ export class ToolExecutor {
       }
     }
 
-    if (toolName === 'intercomswap_swap_sol_escrow_init_and_post') {
-      assertAllowedKeys(args, toolName, [
-        'channel',
-        'trade_id',
-        'payment_hash_hex',
-        'mint',
-        'amount',
-        'recipient',
-        'refund',
-        'refund_after_unix',
-        'trade_fee_collector',
-      ]);
+	    if (toolName === 'intercomswap_swap_sol_escrow_init_and_post') {
+	      assertAllowedKeys(args, toolName, [
+	        'channel',
+	        'trade_id',
+	        'payment_hash_hex',
+	        'mint',
+	        'amount',
+	        'recipient',
+	        'refund',
+	        'refund_after_unix',
+	        'trade_fee_collector',
+	        'cu_limit',
+	        'cu_price',
+	      ]);
       requireApproval(toolName, autoApprove);
       const channel = normalizeChannelName(expectString(args, toolName, 'channel', { max: 128 }));
       const tradeId = expectString(args, toolName, 'trade_id', { min: 1, max: 128, pattern: /^[A-Za-z0-9_.:-]+$/ });
@@ -2839,10 +2939,10 @@ export class ToolExecutor {
 
       const store = await this._openReceiptsStore({ required: true });
       try {
-      const signer = this._requireSolanaSigner();
-      const programId = this._programId();
-      const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+	      const signer = this._requireSolanaSigner();
+	      const programId = this._programId();
+	      const commitment = this._commitment();
+	      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       // Fees are read from on-chain config/trade-config; callers must not supply them.
       const fees = await fetchOnchainFeeSnapshot({
@@ -3494,7 +3594,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_transfer_sol') {
-      assertAllowedKeys(args, toolName, ['to', 'lamports']);
+      assertAllowedKeys(args, toolName, ['to', 'lamports', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const to = new PublicKey(normalizeBase58(expectString(args, toolName, 'to', { max: 64 }), 'to'));
       const lamportsStr = normalizeAtomicAmount(expectString(args, toolName, 'lamports', { max: 64 }), 'lamports');
@@ -3506,13 +3606,16 @@ export class ToolExecutor {
 
       const signer = this._requireSolanaSigner();
       const commitment = this._commitment();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
       return this._pool().call(async (connection) => {
         const ix = SystemProgram.transfer({
           fromPubkey: signer.publicKey,
           toPubkey: to,
           lamports,
         });
-        const tx = new Transaction().add(ix);
+        const tx = new Transaction();
+        for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+        tx.add(ix);
         tx.feePayer = signer.publicKey;
         const latest = await connection.getLatestBlockhash(commitment);
         tx.recentBlockhash = latest.blockhash;
@@ -3523,7 +3626,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_token_transfer') {
-      assertAllowedKeys(args, toolName, ['mint', 'to_owner', 'amount', 'create_ata']);
+      assertAllowedKeys(args, toolName, ['mint', 'to_owner', 'amount', 'create_ata', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
       const toOwner = new PublicKey(normalizeBase58(expectString(args, toolName, 'to_owner', { max: 64 }), 'to_owner'));
@@ -3535,12 +3638,48 @@ export class ToolExecutor {
 
       const signer = this._requireSolanaSigner();
       const commitment = this._commitment();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
       return this._pool().call(async (connection) => {
-        const fromAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
-        const toAta = await getAssociatedTokenAddress(mint, toOwner, true);
-        if (createAta) await getOrCreateAta(connection, signer, toOwner, mint, commitment);
-        else await getAccount(connection, toAta, commitment);
-        const sig = await splTransfer(connection, signer, fromAta, toAta, signer.publicKey, amount, [], { commitment });
+        const fromAta = await getAssociatedTokenAddress(mint, signer.publicKey, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+        const toAta = await getAssociatedTokenAddress(mint, toOwner, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+        const fromInfo = await connection.getAccountInfo(fromAta, commitment);
+        const toInfo = await connection.getAccountInfo(toAta, commitment);
+        if (!toInfo && !createAta) throw new Error(`${toolName}: recipient ATA missing (set create_ata=true to create it)`);
+
+        const tx = new Transaction();
+        for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+        if (!fromInfo) {
+          tx.add(
+            createAssociatedTokenAccountInstruction(
+              signer.publicKey,
+              fromAta,
+              signer.publicKey,
+              mint,
+              TOKEN_PROGRAM_ID,
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            )
+          );
+        }
+        if (!toInfo && createAta) {
+          tx.add(
+            createAssociatedTokenAccountInstruction(
+              signer.publicKey,
+              toAta,
+              toOwner,
+              mint,
+              TOKEN_PROGRAM_ID,
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            )
+          );
+        }
+        tx.add(createTransferInstruction(fromAta, toAta, signer.publicKey, amount, [], TOKEN_PROGRAM_ID));
+
+        tx.feePayer = signer.publicKey;
+        const latest = await connection.getLatestBlockhash(commitment);
+        tx.recentBlockhash = latest.blockhash;
+        tx.sign(signer);
+        const sig = await sendAndConfirm(connection, tx, commitment);
         return {
           type: 'token_transfer',
           mint: mint.toBase58(),
@@ -3555,21 +3694,40 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_mint_create') {
-      assertAllowedKeys(args, toolName, ['decimals']);
+      assertAllowedKeys(args, toolName, ['decimals', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const decimals = expectInt(args, toolName, 'decimals', { min: 0, max: 18 });
       if (dryRun) return { type: 'dry_run', tool: toolName, decimals };
       const signer = this._requireSolanaSigner();
       const commitment = this._commitment();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
       return this._pool().call(async (connection) => {
         const mintKp = Keypair.generate();
-        const mint = await createMint(connection, signer, signer.publicKey, signer.publicKey, decimals, mintKp, { commitment });
-        return { type: 'mint_created', mint: mint.toBase58(), decimals };
+        const rent = await connection.getMinimumBalanceForRentExemption(MINT_SIZE, commitment);
+        const tx = new Transaction();
+        for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+        tx.add(
+          SystemProgram.createAccount({
+            fromPubkey: signer.publicKey,
+            newAccountPubkey: mintKp.publicKey,
+            space: MINT_SIZE,
+            lamports: rent,
+            programId: TOKEN_PROGRAM_ID,
+          })
+        );
+        tx.add(createInitializeMintInstruction(mintKp.publicKey, decimals, signer.publicKey, signer.publicKey, TOKEN_PROGRAM_ID));
+
+        tx.feePayer = signer.publicKey;
+        const latest = await connection.getLatestBlockhash(commitment);
+        tx.recentBlockhash = latest.blockhash;
+        tx.sign(signer, mintKp);
+        const sig = await sendAndConfirm(connection, tx, commitment);
+        return { type: 'mint_created', mint: mintKp.publicKey.toBase58(), decimals, tx_sig: sig };
       }, { label: 'sol_mint_create' });
     }
 
     if (toolName === 'intercomswap_sol_mint_to') {
-      assertAllowedKeys(args, toolName, ['mint', 'to_owner', 'amount', 'create_ata']);
+      assertAllowedKeys(args, toolName, ['mint', 'to_owner', 'amount', 'create_ata', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
       const toOwner = new PublicKey(normalizeBase58(expectString(args, toolName, 'to_owner', { max: 64 }), 'to_owner'));
@@ -3581,11 +3739,33 @@ export class ToolExecutor {
 
       const signer = this._requireSolanaSigner();
       const commitment = this._commitment();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
       return this._pool().call(async (connection) => {
-        const toAta = await getAssociatedTokenAddress(mint, toOwner, true);
-        if (createAta) await getOrCreateAta(connection, signer, toOwner, mint, commitment);
-        else await getAccount(connection, toAta, commitment);
-        const sig = await mintTo(connection, signer, mint, toAta, signer.publicKey, amount, [], { commitment });
+        const toAta = await getAssociatedTokenAddress(mint, toOwner, true, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+        const toInfo = await connection.getAccountInfo(toAta, commitment);
+        if (!toInfo && !createAta) throw new Error(`${toolName}: recipient ATA missing (set create_ata=true to create it)`);
+
+        const tx = new Transaction();
+        for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+        if (!toInfo && createAta) {
+          tx.add(
+            createAssociatedTokenAccountInstruction(
+              signer.publicKey,
+              toAta,
+              toOwner,
+              mint,
+              TOKEN_PROGRAM_ID,
+              ASSOCIATED_TOKEN_PROGRAM_ID
+            )
+          );
+        }
+        tx.add(createMintToInstruction(mint, toAta, signer.publicKey, amount, [], TOKEN_PROGRAM_ID));
+
+        tx.feePayer = signer.publicKey;
+        const latest = await connection.getLatestBlockhash(commitment);
+        tx.recentBlockhash = latest.blockhash;
+        tx.sign(signer);
+        const sig = await sendAndConfirm(connection, tx, commitment);
         return { type: 'mint_to', mint: mint.toBase58(), to_owner: toOwner.toBase58(), to_ata: toAta.toBase58(), amount: amountStr, tx_sig: sig };
       }, { label: 'sol_mint_to' });
     }
@@ -3698,7 +3878,7 @@ export class ToolExecutor {
 
     // Solana mutations
     if (toolName === 'intercomswap_sol_config_set') {
-      assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector']);
+      assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const feeBps = expectInt(args, toolName, 'fee_bps', { min: 0, max: 500 });
       const feeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'fee_collector', { max: 64 }), 'fee_collector'));
@@ -3707,7 +3887,7 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
         // If config does not exist, init it.
@@ -3737,7 +3917,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_trade_config_set') {
-      assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector']);
+      assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const feeBps = expectInt(args, toolName, 'fee_bps', { min: 0, max: 1000 });
       const feeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'fee_collector', { max: 64 }), 'fee_collector'));
@@ -3746,7 +3926,7 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
         const current = await getTradeConfigState(connection, feeCollector, programId, commitment);
@@ -3775,7 +3955,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_fees_withdraw') {
-      assertAllowedKeys(args, toolName, ['mint', 'to', 'amount']);
+      assertAllowedKeys(args, toolName, ['mint', 'to', 'amount', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
       const to = new PublicKey(normalizeBase58(expectString(args, toolName, 'to', { max: 64 }), 'to'));
@@ -3786,10 +3966,10 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
-        const toAta = await getOrCreateAta(connection, signer, to, mint, commitment);
+        const toAta = await getOrCreateAta(connection, signer, to, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
         const build = await withdrawFeesTx({
           connection,
           feeCollector: signer,
@@ -3806,7 +3986,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_trade_fees_withdraw') {
-      assertAllowedKeys(args, toolName, ['mint', 'to', 'amount']);
+      assertAllowedKeys(args, toolName, ['mint', 'to', 'amount', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
       const to = new PublicKey(normalizeBase58(expectString(args, toolName, 'to', { max: 64 }), 'to'));
@@ -3817,10 +3997,10 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
-        const toAta = await getOrCreateAta(connection, signer, to, mint, commitment);
+        const toAta = await getOrCreateAta(connection, signer, to, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
         const build = await withdrawTradeFeesTx({
           connection,
           feeCollector: signer,
@@ -3851,6 +4031,8 @@ export class ToolExecutor {
         'refund',
         'refund_after_unix',
         'trade_fee_collector',
+        'cu_limit',
+        'cu_price',
       ]);
       requireApproval(toolName, autoApprove);
       const paymentHashHex = normalizeHex32(expectString(args, toolName, 'payment_hash_hex', { min: 64, max: 64 }), 'payment_hash_hex');
@@ -3879,10 +4061,10 @@ export class ToolExecutor {
       if (dryRun) return { type: 'dry_run', tool: toolName, payment_hash_hex: paymentHashHex };
 
       const signer = this._requireSolanaSigner();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
-        const payerAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
+        const payerAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
         const build = await createEscrowTx({
           connection,
           payer: signer,
@@ -3916,7 +4098,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_escrow_claim') {
-      assertAllowedKeys(args, toolName, ['preimage_hex', 'mint']);
+      assertAllowedKeys(args, toolName, ['preimage_hex', 'mint', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const preimageArg = expectString(args, toolName, 'preimage_hex', { min: 1, max: 200 });
       const preimageResolved = resolveSecretArg(secrets, preimageArg, { label: 'preimage_hex', expectType: 'string' });
@@ -3928,7 +4110,7 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
         const escrow = await getEscrowState(connection, paymentHashHex, programId, commitment);
@@ -3941,7 +4123,7 @@ export class ToolExecutor {
         const tradeFeeCollector = escrow.tradeFeeCollector ?? escrow.feeCollector;
         if (!tradeFeeCollector) throw new Error('Escrow missing tradeFeeCollector');
 
-        const recipientAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
+        const recipientAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
         const build = await claimEscrowTx({
           connection,
           recipient: signer,
@@ -3960,7 +4142,7 @@ export class ToolExecutor {
     }
 
     if (toolName === 'intercomswap_sol_escrow_refund') {
-      assertAllowedKeys(args, toolName, ['payment_hash_hex', 'mint']);
+      assertAllowedKeys(args, toolName, ['payment_hash_hex', 'mint', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
       const paymentHashHex = normalizeHex32(expectString(args, toolName, 'payment_hash_hex', { min: 64, max: 64 }), 'payment_hash_hex');
       const mint = new PublicKey(normalizeBase58(expectString(args, toolName, 'mint', { max: 64 }), 'mint'));
@@ -3969,7 +4151,7 @@ export class ToolExecutor {
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
       const commitment = this._commitment();
-      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+      const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
       return this._pool().call(async (connection) => {
         const escrow = await getEscrowState(connection, paymentHashHex, programId, commitment);
@@ -3979,7 +4161,7 @@ export class ToolExecutor {
         }
         if (!escrow.mint.equals(mint)) throw new Error(`Mint mismatch (escrow.mint=${escrow.mint.toBase58()})`);
 
-        const refundAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
+        const refundAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
         const build = await refundEscrowTx({
           connection,
           refund: signer,
@@ -4053,7 +4235,7 @@ export class ToolExecutor {
       }
 
       if (toolName === 'intercomswap_swaprecover_claim') {
-        assertAllowedKeys(args, toolName, ['trade_id', 'payment_hash_hex']);
+        assertAllowedKeys(args, toolName, ['trade_id', 'payment_hash_hex', 'cu_limit', 'cu_price']);
         requireApproval(toolName, autoApprove);
         const tradeId = expectOptionalString(args, toolName, 'trade_id', { min: 1, max: 128 });
         const paymentHashHex = expectOptionalString(args, toolName, 'payment_hash_hex', { min: 64, max: 64, pattern: /^[0-9a-fA-F]{64}$/ });
@@ -4077,7 +4259,7 @@ export class ToolExecutor {
         const mint = new PublicKey(mintStr);
         const programId = new PublicKey(programStr);
         const commitment = this._commitment();
-        const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+        const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
         const build = await this._pool().call(async (connection) => {
           const onchain = await getEscrowState(connection, hash, programId, commitment);
@@ -4087,7 +4269,7 @@ export class ToolExecutor {
           }
           const tradeFeeCollector = onchain.tradeFeeCollector ?? onchain.feeCollector;
           if (!tradeFeeCollector) throw new Error('Escrow missing tradeFeeCollector');
-          const recipientAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
+          const recipientAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
           return claimEscrowTx({
             connection,
             recipient: signer,
@@ -4110,7 +4292,7 @@ export class ToolExecutor {
       }
 
       if (toolName === 'intercomswap_swaprecover_refund') {
-        assertAllowedKeys(args, toolName, ['trade_id', 'payment_hash_hex']);
+        assertAllowedKeys(args, toolName, ['trade_id', 'payment_hash_hex', 'cu_limit', 'cu_price']);
         requireApproval(toolName, autoApprove);
         const tradeId = expectOptionalString(args, toolName, 'trade_id', { min: 1, max: 128 });
         const paymentHashHex = expectOptionalString(args, toolName, 'payment_hash_hex', { min: 64, max: 64, pattern: /^[0-9a-fA-F]{64}$/ });
@@ -4133,7 +4315,7 @@ export class ToolExecutor {
         const mint = new PublicKey(mintStr);
         const programId = new PublicKey(programStr);
         const commitment = this._commitment();
-        const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+        const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudgetWithOverrides(args, toolName);
 
         const build = await this._pool().call(async (connection) => {
           const onchain = await getEscrowState(connection, hash, programId, commitment);
@@ -4141,7 +4323,7 @@ export class ToolExecutor {
           if (!onchain.refund.equals(signer.publicKey)) {
             throw new Error(`Refund mismatch (escrow.refund=${onchain.refund.toBase58()})`);
           }
-          const refundAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
+          const refundAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment, { computeUnitLimit, computeUnitPriceMicroLamports });
           return refundEscrowTx({
             connection,
             refund: signer,

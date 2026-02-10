@@ -51,6 +51,20 @@ const atomicAmountParam = {
 
 const satsParam = { type: 'integer', minimum: 1, maximum: 21_000_000 * 100_000_000, description: 'Satoshis' };
 
+const solCuLimitParam = {
+  type: 'integer',
+  minimum: 0,
+  maximum: 1_400_000,
+  description: 'Optional Solana compute unit limit override (0/omit uses instance default).',
+};
+
+const solCuPriceParam = {
+  type: 'integer',
+  minimum: 0,
+  maximum: 1_000_000_000,
+  description: 'Optional Solana compute unit price override in micro-lamports (priority fee). 0/omit uses instance default.',
+};
+
 // NOTE: This is a first, safe “tool surface” for prompting.
 // The executor (Phase 5B) must validate and *must not* allow arbitrary file paths or shell execution.
 export const INTERCOMSWAP_TOOLS = [
@@ -797,36 +811,38 @@ export const INTERCOMSWAP_TOOLS = [
     },
     required: ['channel', 'trade_id', 'btc_sats', 'label', 'description'],
   }),
-  tool(
-    'intercomswap_swap_sol_escrow_init_and_post',
-    'Maker: init Solana escrow and post SOL_ESCROW_CREATED into swap:<id>. Fees are read from on-chain config/trade-config (not negotiated).',
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        channel: channelParam,
-        trade_id: { type: 'string', minLength: 1, maxLength: 128 },
-        payment_hash_hex: hex32Param,
-        mint: base58Param,
-        amount: atomicAmountParam,
-        recipient: base58Param,
-        refund: base58Param,
-        refund_after_unix: unixSecParam,
-        trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
-      },
-      required: [
-        'channel',
-        'trade_id',
-        'payment_hash_hex',
+	  tool(
+	    'intercomswap_swap_sol_escrow_init_and_post',
+	    'Maker: init Solana escrow and post SOL_ESCROW_CREATED into swap:<id>. Fees are read from on-chain config/trade-config (not negotiated).',
+	    {
+	      type: 'object',
+	      additionalProperties: false,
+	      properties: {
+	        channel: channelParam,
+	        trade_id: { type: 'string', minLength: 1, maxLength: 128 },
+	        payment_hash_hex: hex32Param,
+	        mint: base58Param,
+	        amount: atomicAmountParam,
+	        recipient: base58Param,
+	        refund: base58Param,
+	        refund_after_unix: unixSecParam,
+	        trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
+	        cu_limit: solCuLimitParam,
+	        cu_price: solCuPriceParam,
+	      },
+	      required: [
+	        'channel',
+	        'trade_id',
+	        'payment_hash_hex',
         'mint',
         'amount',
         'recipient',
-        'refund',
-        'refund_after_unix',
-        'trade_fee_collector',
-      ],
-    }
-  ),
+	        'refund',
+	        'refund_after_unix',
+	        'trade_fee_collector',
+	      ],
+	    }
+	  ),
   tool(
     'intercomswap_swap_verify_pre_pay',
     'Taker: verify (terms + LN invoice + Sol escrow) and validate the escrow exists on-chain before paying.',
@@ -1002,6 +1018,8 @@ export const INTERCOMSWAP_TOOLS = [
     properties: {
       to: base58Param,
       lamports: atomicAmountParam,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['to', 'lamports'],
   }),
@@ -1013,6 +1031,8 @@ export const INTERCOMSWAP_TOOLS = [
       to_owner: base58Param,
       amount: atomicAmountParam,
       create_ata: { type: 'boolean', description: 'Create recipient ATA if missing (default true).' },
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['mint', 'to_owner', 'amount'],
   }),
@@ -1021,6 +1041,8 @@ export const INTERCOMSWAP_TOOLS = [
     additionalProperties: false,
     properties: {
       decimals: { type: 'integer', minimum: 0, maximum: 18 },
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['decimals'],
   }),
@@ -1032,6 +1054,8 @@ export const INTERCOMSWAP_TOOLS = [
       to_owner: base58Param,
       amount: atomicAmountParam,
       create_ata: { type: 'boolean', description: 'Create recipient ATA if missing (default true).' },
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['mint', 'to_owner', 'amount'],
   }),
@@ -1072,6 +1096,8 @@ export const INTERCOMSWAP_TOOLS = [
       refund: base58Param,
       refund_after_unix: unixSecParam,
       trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: [
       'payment_hash_hex',
@@ -1095,6 +1121,8 @@ export const INTERCOMSWAP_TOOLS = [
         description: '32-byte hex preimage, or a secret handle returned by promptd (secret:<id>).',
       },
       mint: base58Param,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['preimage_hex', 'mint'],
   }),
@@ -1104,6 +1132,8 @@ export const INTERCOMSWAP_TOOLS = [
     properties: {
       payment_hash_hex: hex32Param,
       mint: base58Param,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['payment_hash_hex', 'mint'],
   }),
@@ -1114,6 +1144,8 @@ export const INTERCOMSWAP_TOOLS = [
     properties: {
       fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
       fee_collector: base58Param,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['fee_bps', 'fee_collector'],
   }),
@@ -1124,6 +1156,8 @@ export const INTERCOMSWAP_TOOLS = [
       mint: base58Param,
       to: base58Param,
       amount: atomicAmountParam,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: ['mint', 'to', 'amount'],
   }),
@@ -1149,6 +1183,8 @@ export const INTERCOMSWAP_TOOLS = [
       properties: {
         fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
         fee_collector: base58Param,
+        cu_limit: solCuLimitParam,
+        cu_price: solCuPriceParam,
       },
       required: ['fee_bps', 'fee_collector'],
     }
@@ -1163,6 +1199,8 @@ export const INTERCOMSWAP_TOOLS = [
         mint: base58Param,
         to: base58Param,
         amount: atomicAmountParam,
+        cu_limit: solCuLimitParam,
+        cu_price: solCuPriceParam,
       },
       required: ['mint', 'to', 'amount'],
     }
@@ -1213,6 +1251,8 @@ export const INTERCOMSWAP_TOOLS = [
     properties: {
       trade_id: { type: 'string', minLength: 1, maxLength: 128 },
       payment_hash_hex: hex32Param,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: [],
   }),
@@ -1222,6 +1262,8 @@ export const INTERCOMSWAP_TOOLS = [
     properties: {
       trade_id: { type: 'string', minLength: 1, maxLength: 128 },
       payment_hash_hex: hex32Param,
+      cu_limit: solCuLimitParam,
+      cu_price: solCuPriceParam,
     },
     required: [],
   }),

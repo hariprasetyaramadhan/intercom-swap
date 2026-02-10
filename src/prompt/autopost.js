@@ -23,9 +23,10 @@ function safeCloneArgs(args) {
 // Intentionally *not* a general job runner: it only supports a small allowlist
 // of tools and strictly controlled argument shaping.
 export class AutopostManager {
-  constructor({ runTool }) {
+  constructor({ runTool, getTrade = null }) {
     if (typeof runTool !== 'function') throw new Error('AutopostManager: runTool function required');
     this.runTool = runTool;
+    this.getTrade = typeof getTrade === 'function' ? getTrade : null;
     this.jobs = new Map(); // name -> job
   }
 
@@ -86,6 +87,7 @@ export class AutopostManager {
       ttlSec,
       validUntilUnix,
       args: baseArgs,
+      tradeId: t === 'intercomswap_rfq_post' && typeof baseArgs?.trade_id === 'string' ? String(baseArgs.trade_id).trim() : null,
       runs: 0,
       startedAt: Date.now(),
       lastRunAt: null,
@@ -95,18 +97,38 @@ export class AutopostManager {
       _queue: Promise.resolve(),
     };
 
+    const stopJob = (reason) => {
+      try {
+        if (job._timer) clearInterval(job._timer);
+      } catch (_e) {}
+      this.jobs.delete(job.name);
+      job.lastOk = true;
+      job.lastError = reason ? String(reason) : null;
+    };
+
     const runOnce = async () => {
       const nowSec = Math.floor(Date.now() / 1000);
       if (nowSec >= job.validUntilUnix) {
         // Stop the job when it is no longer valid (do not repost/extend indefinitely).
-        try {
-          if (job._timer) clearInterval(job._timer);
-        } catch (_e) {}
-        this.jobs.delete(job.name);
-        job.lastOk = true;
-        job.lastError = 'expired';
+        stopJob('expired');
         return { type: 'autopost_stopped', name: job.name, ok: true, reason: 'expired' };
       }
+
+      // For RFQ bots: once the trade is in-progress (or finished), stop reposting so the operator
+      // doesn’t accidentally invite multiple counterparties for the same trade_id.
+      if (job.tool === 'intercomswap_rfq_post' && job.tradeId && this.getTrade) {
+        try {
+          const tr = await this.getTrade(job.tradeId);
+          const st = tr ? String(tr.state || '').trim() : '';
+          if (st && st !== 'rfq' && st !== 'rfq_posted') {
+            stopJob(`filled:${st}`);
+            return { type: 'autopost_stopped', name: job.name, ok: true, reason: 'filled', state: st };
+          }
+        } catch (_e) {
+          // Ignore store read errors; the scheduler should remain resilient and continue.
+        }
+      }
+
       const runArgs = safeCloneArgs(job.args);
       if (t === 'intercomswap_offer_post') {
         // Keep discoverability via periodic repost, but do NOT extend expiry.
@@ -143,12 +165,7 @@ export class AutopostManager {
       // Stop naturally once the offer/RFQ expires.
       const nowSec = Math.floor(Date.now() / 1000);
       if (nowSec >= job.validUntilUnix) {
-        try {
-          if (job._timer) clearInterval(job._timer);
-        } catch (_e) {}
-        this.jobs.delete(job.name);
-        job.lastOk = true;
-        job.lastError = 'expired';
+        stopJob('expired');
         return;
       }
       job._queue = job._queue.then(runOnce).catch(() => {});

@@ -63,6 +63,15 @@ function parseArgs(argv) {
 }
 
 function json(res, status, body) {
+  // Guard against double responses from multiple error paths.
+  // Node can throw ERR_HTTP_HEADERS_SENT if two code paths race to write headers.
+  if (res.__intercomswapResponded) {
+    try {
+      res.end();
+    } catch (_e) {}
+    return;
+  }
+  res.__intercomswapResponded = true;
   if (res.headersSent || res.writableEnded) {
     try {
       res.end();

@@ -119,6 +119,30 @@ function App() {
   const [usdtSendToOwner, setUsdtSendToOwner] = useState<string>('');
   const [usdtSendAtomic, setUsdtSendAtomic] = useState<string | null>(null);
 
+  // Optional Solana priority fee overrides (applied to UI-driven Solana transactions).
+  const [solCuLimit, setSolCuLimit] = useState<number>(() => {
+    try {
+      const v = Number.parseInt(String(window.localStorage.getItem('collin_sol_cu_limit') || '0'), 10);
+      return Number.isFinite(v) ? Math.max(0, Math.min(1_400_000, Math.trunc(v))) : 0;
+    } catch (_e) {
+      return 0;
+    }
+  });
+  const [solCuPrice, setSolCuPrice] = useState<number>(() => {
+    try {
+      const v = Number.parseInt(String(window.localStorage.getItem('collin_sol_cu_price') || '0'), 10);
+      return Number.isFinite(v) ? Math.max(0, Math.min(1_000_000_000, Math.trunc(v))) : 0;
+    } catch (_e) {
+      return 0;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('collin_sol_cu_limit', String(solCuLimit || 0));
+      window.localStorage.setItem('collin_sol_cu_price', String(solCuPrice || 0));
+    } catch (_e) {}
+  }, [solCuLimit, solCuPrice]);
+
   useEffect(() => {
     try {
       if (walletUsdtMint.trim()) window.localStorage.setItem('collin_wallet_usdt_mint', walletUsdtMint.trim());
@@ -622,8 +646,9 @@ function App() {
     const okPeer = Boolean(preflight?.peer_status?.peers?.some?.((p: any) => Boolean(p?.alive)));
     if (okChecklist && !okPeer) reasons.push('peer not running');
 
-	    const okStream = Boolean(scConnected);
-	    if (okChecklist && !okStream) reasons.push(scConnecting ? 'sc/stream connecting...' : 'sc/stream not connected');
+		    // Treat "connecting" as ok for gating so the UI doesn't hard-block on transient feed reconnects.
+		    const okStream = Boolean(scConnected || scConnecting);
+		    if (okChecklist && !okStream) reasons.push('sc/stream not connected');
 
     const okLn =
       Boolean(preflight?.ln_summary?.channels && Number(preflight.ln_summary.channels) > 0) &&
@@ -825,17 +850,25 @@ function App() {
     if (state !== 'ln_paid') return void pushToast('info', `Not claimable yet (state=${state || '?'})`);
     if (!preimage) return void pushToast('error', `Cannot claim: missing LN preimage in receipts (${trade_id})`);
 
-    try {
-      if (toolRequiresApproval('intercomswap_swaprecover_claim') && !autoApprove) {
-        const ok = window.confirm(`Claim escrow now?\n\ntrade_id: ${trade_id}`);
-        if (!ok) return;
-      }
-      await runToolFinal('intercomswap_swaprecover_claim', { trade_id }, { auto_approve: true });
-      pushToast('success', `Claim submitted (${trade_id})`);
-      void loadTradesPage({ reset: true });
-      void loadOpenClaimsPage({ reset: true });
-      void loadOpenRefundsPage({ reset: true });
-    } catch (err: any) {
+	    try {
+	      if (toolRequiresApproval('intercomswap_swaprecover_claim') && !autoApprove) {
+	        const ok = window.confirm(`Claim escrow now?\n\ntrade_id: ${trade_id}`);
+	        if (!ok) return;
+	      }
+	      await runToolFinal(
+	        'intercomswap_swaprecover_claim',
+	        {
+	          trade_id,
+	          ...(solCuLimit > 0 ? { cu_limit: solCuLimit } : {}),
+	          ...(solCuPrice > 0 ? { cu_price: solCuPrice } : {}),
+	        },
+	        { auto_approve: true }
+	      );
+	      pushToast('success', `Claim submitted (${trade_id})`);
+	      void loadTradesPage({ reset: true });
+	      void loadOpenClaimsPage({ reset: true });
+	      void loadOpenRefundsPage({ reset: true });
+	    } catch (err: any) {
       pushToast('error', err?.message || String(err));
     }
   }
@@ -867,17 +900,25 @@ function App() {
       );
     }
 
-    try {
-      if (toolRequiresApproval('intercomswap_swaprecover_refund') && !autoApprove) {
-        const ok = window.confirm(`Refund escrow now?\n\ntrade_id: ${trade_id}`);
-        if (!ok) return;
-      }
-      await runToolFinal('intercomswap_swaprecover_refund', { trade_id }, { auto_approve: true });
-      pushToast('success', `Refund submitted (${trade_id})`);
-      void loadTradesPage({ reset: true });
-      void loadOpenRefundsPage({ reset: true });
-      void loadOpenClaimsPage({ reset: true });
-    } catch (err: any) {
+	    try {
+	      if (toolRequiresApproval('intercomswap_swaprecover_refund') && !autoApprove) {
+	        const ok = window.confirm(`Refund escrow now?\n\ntrade_id: ${trade_id}`);
+	        if (!ok) return;
+	      }
+	      await runToolFinal(
+	        'intercomswap_swaprecover_refund',
+	        {
+	          trade_id,
+	          ...(solCuLimit > 0 ? { cu_limit: solCuLimit } : {}),
+	          ...(solCuPrice > 0 ? { cu_price: solCuPrice } : {}),
+	        },
+	        { auto_approve: true }
+	      );
+	      pushToast('success', `Refund submitted (${trade_id})`);
+	      void loadTradesPage({ reset: true });
+	      void loadOpenRefundsPage({ reset: true });
+	      void loadOpenClaimsPage({ reset: true });
+	    } catch (err: any) {
       pushToast('error', err?.message || String(err));
     }
   }
@@ -3992,14 +4033,62 @@ function App() {
               ) : null}
             </Panel>
 
-            <Panel title="Solana">
-              <div className="muted small">
-                rpc: <span className="mono">{String(Array.isArray(envInfo?.solana?.rpc_urls) ? envInfo.solana.rpc_urls[0] : '—')}</span>
-              </div>
-              <div className="field">
-                <div className="field-hd">
-                  <span className="mono">Funding Address (SOL)</span>
-                </div>
+	            <Panel title="Solana">
+	              <div className="muted small">
+	                rpc: <span className="mono">{String(Array.isArray(envInfo?.solana?.rpc_urls) ? envInfo.solana.rpc_urls[0] : '—')}</span>
+	              </div>
+
+	              <div className="field">
+	                <div className="field-hd">
+	                  <span className="mono">Tx Fees (Priority)</span>
+	                </div>
+	                <div className="muted small">
+	                  Optional. Used for Solana transactions started from Collin (transfers, claims/refunds). Set to <span className="mono">0</span> to use defaults.
+	                </div>
+	                <div className="gridform" style={{ marginTop: 8 }}>
+	                  <div className="field">
+	                    <div className="field-hd">
+	                      <span className="mono">CU limit</span>
+	                    </div>
+	                    <input
+	                      className="input mono"
+	                      type="number"
+	                      min={0}
+	                      max={1400000}
+	                      value={String(solCuLimit)}
+	                      onChange={(e) => {
+	                        const n = Number.parseInt(e.target.value, 10);
+	                        if (!Number.isFinite(n)) return;
+	                        setSolCuLimit(Math.max(0, Math.min(1_400_000, Math.trunc(n))));
+	                      }}
+	                      placeholder="0"
+	                    />
+	                  </div>
+	                  <div className="field">
+	                    <div className="field-hd">
+	                      <span className="mono">CU price</span>
+	                      <span className="muted small">micro-lamports/CU</span>
+	                    </div>
+	                    <input
+	                      className="input mono"
+	                      type="number"
+	                      min={0}
+	                      max={1000000000}
+	                      value={String(solCuPrice)}
+	                      onChange={(e) => {
+	                        const n = Number.parseInt(e.target.value, 10);
+	                        if (!Number.isFinite(n)) return;
+	                        setSolCuPrice(Math.max(0, Math.min(1_000_000_000, Math.trunc(n))));
+	                      }}
+	                      placeholder="0"
+	                    />
+	                  </div>
+	                </div>
+	              </div>
+	              <div className="field">
+	                <div className="field-hd">
+	                  <span className="mono">Funding Address (SOL)</span>
+	                </div>
                 <div className="muted small">
                   Fund this address with SOL for transaction fees. Tokens (USDT) are received to the associated token
                   account of this owner address.
@@ -4111,13 +4200,22 @@ function App() {
                       if (toolRequiresApproval('intercomswap_sol_transfer_sol') && !autoApprove) {
                         const ok = window.confirm(`Send SOL now?\n\nto: ${to}\nlamports: ${lamports}`);
                         if (!ok) return;
-                      }
-                      try {
-                        const out = await runDirectToolOnce('intercomswap_sol_transfer_sol', { to, lamports }, { auto_approve: true });
-                        const sig = String(out?.tx_sig || out?.sig || '').trim();
-                        pushToast('success', `SOL sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
-                        void refreshPreflight();
-                      } catch (e: any) {
+	                      }
+	                      try {
+	                        const out = await runDirectToolOnce(
+	                          'intercomswap_sol_transfer_sol',
+	                          {
+	                            to,
+	                            lamports,
+	                            ...(solCuLimit > 0 ? { cu_limit: solCuLimit } : {}),
+	                            ...(solCuPrice > 0 ? { cu_price: solCuPrice } : {}),
+	                          },
+	                          { auto_approve: true }
+	                        );
+	                        const sig = String(out?.tx_sig || out?.sig || '').trim();
+	                        pushToast('success', `SOL sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
+	                        void refreshPreflight();
+	                      } catch (e: any) {
                         pushToast('error', e?.message || String(e));
                       }
                     }}
@@ -4157,15 +4255,22 @@ function App() {
                       if (toolRequiresApproval('intercomswap_sol_token_transfer') && !autoApprove) {
                         const ok = window.confirm(`Send USDT now?\n\nmint: ${mint}\nto_owner: ${to_owner}\namount: ${amount}`);
                         if (!ok) return;
-                      }
-                      try {
-                        const out = await runDirectToolOnce(
-                          'intercomswap_sol_token_transfer',
-                          { mint, to_owner, amount, create_ata: true },
-                          { auto_approve: true }
-                        );
-                        const sig = String(out?.tx_sig || out?.sig || '').trim();
-                        pushToast('success', `USDT sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
+	                      }
+	                      try {
+	                        const out = await runDirectToolOnce(
+	                          'intercomswap_sol_token_transfer',
+	                          {
+	                            mint,
+	                            to_owner,
+	                            amount,
+	                            create_ata: true,
+	                            ...(solCuLimit > 0 ? { cu_limit: solCuLimit } : {}),
+	                            ...(solCuPrice > 0 ? { cu_price: solCuPrice } : {}),
+	                          },
+	                          { auto_approve: true }
+	                        );
+	                        const sig = String(out?.tx_sig || out?.sig || '').trim();
+	                        pushToast('success', `USDT sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
                         void refreshPreflight();
                       } catch (e: any) {
                         pushToast('error', e?.message || String(e));
