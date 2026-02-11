@@ -4081,6 +4081,7 @@ function App() {
     '';
   const lnImpl = String((preflight as any)?.env?.ln?.impl || (preflight as any)?.ln_info?.implementation || envInfo?.ln?.impl || '').trim().toLowerCase();
   const lnRebalanceSupported = lnImpl === 'lnd';
+  const lnRebalanceMinChannelsOk = lnChannelCount >= 2;
   const lnSpliceBackendSupported = lnImpl === 'cln';
 	  const lnBackend = String(envInfo?.ln?.backend || '');
 	  const lnNetwork = String(envInfo?.ln?.network || '');
@@ -6408,6 +6409,12 @@ function App() {
                           ? 'LND supports explicit self-payment; route outcome still depends on available channels.'
                           : `Current LN impl is ${lnImpl || 'unknown'}; self-pay rebalance requires LND.`}
                       </div>
+                      {!lnRebalanceMinChannelsOk ? (
+                        <div className="alert warn" style={{ marginTop: 8 }}>
+                          <b>Likely no route.</b> Self-pay rebalance usually needs at least <span className="mono">2 active channels</span>{' '}
+                          to form a circular route. Current active/known channels: <span className="mono">{lnChannelCount}</span>.
+                        </div>
+                      ) : null}
                       <div className="gridform" style={{ marginTop: 8 }}>
                         <div className="field">
                           <div className="field-hd">

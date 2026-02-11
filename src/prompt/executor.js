@@ -3820,6 +3820,41 @@ export class ToolExecutor {
         const msg = String(e?.message || e || '');
         const lower = msg.toLowerCase();
         const hints = [];
+        let statusHint = '';
+        try {
+          const st = await lnPayStatus(this.ln, { paymentHashHex });
+          const p = st && typeof st === 'object' && st.payment && typeof st.payment === 'object' ? st.payment : null;
+          if (p) {
+            const parts = [];
+            const status = String(p.status || p.payment_status || '').trim();
+            if (status) parts.push(`status=${status}`);
+            const reason =
+              String(
+                p.failure_reason ||
+                p.failureReason ||
+                p.failure_detail ||
+                p.payment_error ||
+                p.paymentError ||
+                ''
+              ).trim();
+            if (reason) parts.push(`reason=${reason}`);
+            const htlcs = Array.isArray(p.htlcs) ? p.htlcs : [];
+            for (const h of htlcs) {
+              const hs = String(h?.status || '').trim().toUpperCase();
+              if (hs !== 'FAILED') continue;
+              const hReason = String(h?.failure_reason || h?.failure_detail || h?.failure_message || '').trim();
+              if (hReason) {
+                parts.push(`htlc=${hReason}`);
+                break;
+              }
+            }
+            if (parts.length > 0) statusHint = parts.join(', ');
+          } else {
+            statusHint = 'payment not found in listpayments';
+          }
+        } catch (stErr) {
+          statusHint = `pay status lookup failed: ${String(stErr?.message || stErr || '')}`;
+        }
         if (
           lower.includes('unable to find a path') ||
           lower.includes('no_route') ||
@@ -3833,6 +3868,11 @@ export class ToolExecutor {
         }
         if (lower.includes('self') && lower.includes('payment')) {
           hints.push('self-payment policy rejected by backend/node configuration');
+        }
+        if (statusHint && /failed|no_route|route|insufficient|not found|timeout/i.test(statusHint.toLowerCase())) {
+          hints.push(statusHint);
+        } else if (statusHint) {
+          hints.push(`payment status: ${statusHint}`);
         }
         throw new Error(
           `${toolName}: ln payinvoice failed: ${msg}${hints.length > 0 ? ` (hint: ${hints.join('; ')})` : ''}`

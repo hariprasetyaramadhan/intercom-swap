@@ -117,7 +117,16 @@ async function execCli({ cmd, args, cwd }) {
     const code = err?.code;
     const stderr = String(err?.stderr || '').trim();
     const stdout = String(err?.stdout || '').trim();
-    const msg = stderr || stdout || err?.message || String(err);
+    let msg = '';
+    if (stderr && stdout) {
+      const stderrLooksGenericFail =
+        /^(?:\[[^\]]+\]\s*)?failed[:\s]*$/i.test(stderr) ||
+        /^(?:\[[^\]]+\]\s*)?payment failed[:\s]*$/i.test(stderr);
+      msg = stderrLooksGenericFail ? `${stderr}: ${stdout}` : `${stderr} | stdout: ${stdout}`;
+    } else {
+      msg = stderr || stdout || err?.message || String(err);
+    }
+    if (msg.length > 16_000) msg = `${msg.slice(0, 16_000)}…`;
     const e = new Error(msg);
     e.code = code;
     throw e;
