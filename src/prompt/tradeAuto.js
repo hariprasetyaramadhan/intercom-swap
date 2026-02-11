@@ -646,7 +646,7 @@ export class TradeAutoManager {
     this._trace('stage_retry', { stage: String(stageKey), cooldown_ms: ms });
   }
 
-  _recordLnPayFailure({ tradeId, channel, error }) {
+  _recordLnPayFailure({ tradeId, channel, error, forceAbort = false }) {
     if (!tradeId || !channel) return { state: null, shouldAbort: false, elapsedMs: 0 };
     const now = Date.now();
     const normalizedChannel = String(channel || '').trim();
@@ -672,7 +672,15 @@ export class TradeAutoManager {
 
     const threshold = Math.max(2, Number(this.opts?.ln_pay_fail_leave_attempts || 3));
     const minWaitMs = Math.max(1_000, Number(this.opts?.ln_pay_fail_leave_min_wait_ms || 20_000));
+    if (forceAbort) {
+      state.failures = Math.max(Number(state.failures || 0), threshold);
+      const forcedFirstFailAt = now - minWaitMs;
+      if (!Number.isFinite(Number(state.firstFailAt)) || Number(state.firstFailAt) > forcedFirstFailAt) {
+        state.firstFailAt = forcedFirstFailAt;
+      }
+    }
     const elapsedMs = Math.max(0, now - Number(state.firstFailAt || now));
+
     const shouldAbort = Number(state.failures || 0) >= threshold && elapsedMs >= minWaitMs;
     if (shouldAbort && !Number(state.abortedAt || 0)) {
       state.abortedAt = now;
@@ -1868,10 +1876,8 @@ export class TradeAutoManager {
             const stageKey = `${tradeId}:ln_pay`;
             const lnPayFailState = this._lnPayFailByTrade.get(tradeId) || null;
             if (lnPayFailState && Number(lnPayFailState.abortedAt || 0) > 0) {
-              const traceCd = Math.max(1_000, Math.trunc(Number(this.opts?.waiting_terms_trace_cooldown_ms || 15_000)));
-              const nowMs = Date.now();
-              if (!Number(lnPayFailState.lastAbortTraceAt || 0) || nowMs - Number(lnPayFailState.lastAbortTraceAt || 0) >= traceCd) {
-                lnPayFailState.lastAbortTraceAt = nowMs;
+              if (!Number(lnPayFailState.lastAbortTraceAt || 0)) {
+                lnPayFailState.lastAbortTraceAt = Date.now();
                 this._lnPayFailByTrade.set(tradeId, lnPayFailState);
                 this._trace('ln_pay_aborted', {
                   trade_id: tradeId,
@@ -1907,10 +1913,12 @@ export class TradeAutoManager {
               } catch (err) {
                 const errMsg = err?.message || String(err);
                 this._trace('stage_fail', { stage: stageKey, trade_id: tradeId, error: errMsg });
+                const forceAbort = /unroutable invoice precheck/i.test(errMsg);
                 const failRec = this._recordLnPayFailure({
                   tradeId,
                   channel: swapChannel,
                   error: errMsg,
+                  forceAbort,
                 });
                 const failState = failRec?.state || null;
                 const elapsedMs = Math.max(0, Math.trunc(Number(failRec?.elapsedMs || 0)));

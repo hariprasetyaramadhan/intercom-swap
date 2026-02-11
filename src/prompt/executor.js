@@ -4975,6 +4975,49 @@ export class ToolExecutor {
         }, { label: 'swap_verify_pre_pay' });
         if (!verifyRes.ok) throw new Error(`${toolName}: pre-pay verification failed: ${verifyRes.error}`);
 
+        // LN routability precheck (best-effort): avoid repeated NO_ROUTE churn on clearly
+        // unroutable private-only topologies when invoice decode has no route hints and
+        // we do not have a direct active channel to the invoice destination.
+        const lnImpl = String(this?.ln?.impl || '').trim().toLowerCase();
+        if (lnImpl === 'lnd') {
+          let decodedPay = null;
+          let routeHintCount = null;
+          let destinationPubkey = '';
+          try {
+            decodedPay = await lnDecodePay(this.ln, { bolt11 });
+            routeHintCount = countInvoiceRouteHints(decodedPay);
+            const rawDest =
+              String(decodedPay?.destination || '').trim() ||
+              String(decodedPay?.destination_pubkey || '').trim() ||
+              String(decodedPay?.payee || '').trim();
+            if (/^[0-9a-f]{66}$/i.test(rawDest)) destinationPubkey = rawDest.toLowerCase();
+          } catch (_e) {}
+
+          let activePublic = 0;
+          let activePrivate = 0;
+          let directActiveToDestination = false;
+          try {
+            const chanRes = await lnListChannels(this.ln);
+            const rows = normalizeLnChannels({ impl: this?.ln?.impl, listChannels: chanRes, listFunds: null });
+            for (const row of rows) {
+              if (!row?.active) continue;
+              if (row?.private) activePrivate += 1;
+              else activePublic += 1;
+              if (destinationPubkey && String(row?.peer || '').trim().toLowerCase() === destinationPubkey) {
+                directActiveToDestination = true;
+              }
+            }
+          } catch (_e) {}
+
+          if (activePrivate > 0 && activePublic < 1 && routeHintCount === 0 && !directActiveToDestination) {
+            throw new Error(
+              `${toolName}: unroutable invoice precheck: destination ${
+                destinationPubkey || 'unknown'
+              } has no route hints and this node has no direct active channel to destination`
+            );
+          }
+        }
+
         const payRes = await lnPay(this.ln, { bolt11 });
         const preimageHex = String(payRes?.payment_preimage || '').trim().toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(preimageHex)) throw new Error(`${toolName}: missing payment_preimage`);
