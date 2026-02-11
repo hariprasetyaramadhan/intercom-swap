@@ -733,6 +733,10 @@ export class TradeAutoManager {
             quote_accept: null,
             swap_invite: null,
             swap_channel: '',
+            rfq_channel: '',
+            quote_channel: '',
+            quote_accept_channel: '',
+            swap_invite_channel: '',
             rfq_ts: 0,
             quote_ts: 0,
             quote_accept_ts: 0,
@@ -741,21 +745,33 @@ export class TradeAutoManager {
           swapNegotiationByTrade.set(tradeId, neg);
         }
         const ts = eventTs(e);
-        if (kind === 'swap.rfq' && !neg.rfq) {
-          neg.rfq = msg;
-          if (ts > Number(neg.rfq_ts || 0)) neg.rfq_ts = ts;
-        } else if (kind === 'swap.quote' && !neg.quote) {
-          neg.quote = msg;
-          if (ts > Number(neg.quote_ts || 0)) neg.quote_ts = ts;
-        } else if (kind === 'swap.quote_accept' && !neg.quote_accept) {
-          neg.quote_accept = msg;
-          if (ts > Number(neg.quote_accept_ts || 0)) neg.quote_accept_ts = ts;
-        }
-        else if (kind === 'swap.swap_invite') {
-          if (!neg.swap_invite) neg.swap_invite = msg;
-          const ch = String(msg?.body?.swap_channel || '').trim();
-          if (ch) neg.swap_channel = ch;
-          if (ts > Number(neg.swap_invite_ts || 0)) neg.swap_invite_ts = ts;
+        const evtChannel = String(e?.channel || '').trim();
+        if (kind === 'swap.rfq') {
+          if (!neg.rfq || ts >= Number(neg.rfq_ts || 0)) {
+            neg.rfq = msg;
+            neg.rfq_ts = ts;
+            if (evtChannel) neg.rfq_channel = evtChannel;
+          }
+        } else if (kind === 'swap.quote') {
+          if (!neg.quote || ts >= Number(neg.quote_ts || 0)) {
+            neg.quote = msg;
+            neg.quote_ts = ts;
+            if (evtChannel) neg.quote_channel = evtChannel;
+          }
+        } else if (kind === 'swap.quote_accept') {
+          if (!neg.quote_accept || ts >= Number(neg.quote_accept_ts || 0)) {
+            neg.quote_accept = msg;
+            neg.quote_accept_ts = ts;
+            if (evtChannel) neg.quote_accept_channel = evtChannel;
+          }
+        } else if (kind === 'swap.swap_invite') {
+          if (!neg.swap_invite || ts >= Number(neg.swap_invite_ts || 0)) {
+            neg.swap_invite = msg;
+            neg.swap_invite_ts = ts;
+            if (evtChannel) neg.swap_invite_channel = evtChannel;
+            const ch = String(msg?.body?.swap_channel || '').trim();
+            if (ch) neg.swap_channel = ch;
+          }
         }
       }
 
@@ -1395,11 +1411,15 @@ export class TradeAutoManager {
                   nextPingAt: nowMs,
                   pings: 0,
                   timedOutAt: 0,
+                  lastRejoinAt: 0,
+                  rejoins: 0,
                 };
             state.lastTs = nowMs;
             if (!Number.isFinite(Number(state.firstSeenAt)) || Number(state.firstSeenAt) <= 0) state.firstSeenAt = nowMs;
             if (!Number.isFinite(Number(state.nextPingAt)) || Number(state.nextPingAt) <= 0) state.nextPingAt = nowMs;
             if (!Number.isFinite(Number(state.pings)) || Number(state.pings) < 0) state.pings = 0;
+            if (!Number.isFinite(Number(state.lastRejoinAt)) || Number(state.lastRejoinAt) < 0) state.lastRejoinAt = 0;
+            if (!Number.isFinite(Number(state.rejoins)) || Number(state.rejoins) < 0) state.rejoins = 0;
             const waitMs = Math.max(0, nowMs - Number(state.firstSeenAt || nowMs));
 
             if (nowMs - Number(state.lastTraceAt || 0) > traceCooldownMs) {
@@ -1427,19 +1447,67 @@ export class TradeAutoManager {
               });
             }
 
+            if (!timedOut && isObject(neg?.swap_invite) && Number(state.rejoins || 0) < 2 && nowMs - Number(state.lastRejoinAt || 0) >= 20_000) {
+              try {
+                await this._runToolWithTimeout(
+                  { tool: 'intercomswap_join_from_swap_invite', args: { swap_invite_envelope: neg.swap_invite } },
+                  { timeoutMs: Math.min(this._toolTimeoutMs, 12_000), label: 'tradeauto_waiting_terms_rejoin' }
+                );
+                state.rejoins = Number(state.rejoins || 0) + 1;
+                state.lastRejoinAt = nowMs;
+                this._trace('waiting_terms_rejoin_ok', {
+                  trade_id: tradeId,
+                  channel: swapChannel,
+                  attempt: Number(state.rejoins || 0),
+                });
+              } catch (err) {
+                state.rejoins = Number(state.rejoins || 0) + 1;
+                state.lastRejoinAt = nowMs;
+                this._trace('waiting_terms_rejoin_fail', {
+                  trade_id: tradeId,
+                  channel: swapChannel,
+                  attempt: Number(state.rejoins || 0),
+                  error: err?.message || String(err),
+                });
+              }
+            }
+
             if (!timedOut && Number(state.pings || 0) < maxPings && nowMs >= Number(state.nextPingAt || 0)) {
+              let pingOk = 0;
+              const pingErrors = [];
               try {
                 if (isObject(quoteAcceptEnv)) {
-                  await this._runToolWithTimeout(
-                    { tool: 'intercomswap_sc_send_json', args: { channel: swapChannel, json: quoteAcceptEnv } },
-                    { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_waiting_terms_replay_accept' }
+                  const replayChannels = Array.from(
+                    new Set(
+                      [
+                        swapChannel,
+                        String(neg?.quote_accept_channel || '').trim(),
+                        String(neg?.quote_channel || '').trim(),
+                        String(neg?.rfq_channel || '').trim(),
+                        String(neg?.swap_invite_channel || '').trim(),
+                      ].filter((ch) => ch && ch.length > 0)
+                    )
                   );
+                  for (const replayChannel of replayChannels) {
+                    try {
+                      await this._runToolWithTimeout(
+                        { tool: 'intercomswap_sc_send_json', args: { channel: replayChannel, json: quoteAcceptEnv } },
+                        { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_waiting_terms_replay_accept' }
+                      );
+                      pingOk += 1;
+                    } catch (err) {
+                      pingErrors.push(`${replayChannel}: ${err?.message || String(err)}`);
+                    }
+                  }
                   this._trace('waiting_terms_replay_accept_ok', {
                     trade_id: tradeId,
                     channel: swapChannel,
                     attempt: Number(state.pings || 0) + 1,
+                    replay_channels: replayChannels,
+                    sent_ok: pingOk,
                   });
-                } else {
+                }
+                try {
                   await this._runToolWithTimeout(
                     {
                       tool: 'intercomswap_swap_status_post',
@@ -1447,11 +1515,17 @@ export class TradeAutoManager {
                     },
                     { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_waiting_terms_status_ping' }
                   );
+                  pingOk += 1;
                   this._trace('waiting_terms_status_ping_ok', {
                     trade_id: tradeId,
                     channel: swapChannel,
                     attempt: Number(state.pings || 0) + 1,
                   });
+                } catch (err) {
+                  pingErrors.push(`status:${err?.message || String(err)}`);
+                }
+                if (pingOk < 1 && pingErrors.length > 0) {
+                  throw new Error(pingErrors.join(' | '));
                 }
                 state.pings = Number(state.pings || 0) + 1;
                 state.lastPingAt = nowMs;
