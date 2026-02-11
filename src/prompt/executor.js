@@ -3104,8 +3104,23 @@ export class ToolExecutor {
           const msg = String(joinRes?.error || 'join failed');
           throw new Error(`${toolName}: ${msg}`);
         }
+
+        // Keep promptd's persistent stream subscribed too (not only this ephemeral join RPC socket),
+        // otherwise backend automation can miss follow-up swap events after a successful join.
+        this._scSubscribed.add(swapChannel);
+        try {
+          const psc = await this._scEnsurePersistent({ timeoutMs: 10_000 });
+          await psc.subscribe([swapChannel]);
+        } catch (err) {
+          throw new Error(
+            `${toolName}: joined ${swapChannel} but failed to subscribe persistent stream: ${err?.message || String(err)}`
+          );
+        }
+
         return {
           ...(joinRes && typeof joinRes === 'object' ? joinRes : { type: 'joined', channel: swapChannel }),
+          swap_channel: swapChannel,
+          watched: true,
           inviter_key: resolvedInviter,
         };
       });

@@ -917,18 +917,23 @@ export class TradeAutoManager {
           const escrowEnv = isObject(tradeCtx?.escrow) ? tradeCtx.escrow : null;
           const lnPaidEnv = isObject(tradeCtx?.ln_paid) ? tradeCtx.ln_paid : null;
 
+          const termsBody = isObject(termsEnv?.body) ? termsEnv.body : {};
+          const termsLnPayerPeer = String(termsBody?.ln_payer_peer || '').trim().toLowerCase();
+          const termsSolRecipient = String(termsBody?.sol_recipient || '').trim();
+
           const makerSigner = String(termsEnv?.signer || quoteEnv?.signer || '').trim().toLowerCase();
           const takerSigner = String(acceptEnv?.signer || quoteAcceptEnv?.signer || rfqEnv?.signer || '').trim().toLowerCase();
           const iAmMaker = Boolean(localPeer && makerSigner && makerSigner === localPeer);
-          const iAmTaker = Boolean((localPeer && takerSigner && takerSigner === localPeer) || ctx.myRfqTradeIds.has(tradeId));
+          const iAmTaker = Boolean(
+            (localPeer && takerSigner && takerSigner === localPeer) ||
+              ctx.myRfqTradeIds.has(tradeId) ||
+              (localPeer && /^[0-9a-f]{64}$/i.test(termsLnPayerPeer) && termsLnPayerPeer === localPeer) ||
+              (localSolSigner && termsSolRecipient && termsSolRecipient === localSolSigner)
+          );
           if (!iAmMaker && !iAmTaker) continue;
 
           const swapChannel = String(tradeCtx?.channel || neg?.swap_channel || `swap:${tradeId}`).trim();
           if (!swapChannel.startsWith('swap:')) continue;
-
-          const termsBody = isObject(termsEnv?.body) ? termsEnv.body : {};
-          const termsLnPayerPeer = String(termsBody?.ln_payer_peer || '').trim().toLowerCase();
-          const termsSolRecipient = String(termsBody?.sol_recipient || '').trim();
 
           const termsBoundToLocalIdentity = (() => {
             if (!termsEnv) return true;
