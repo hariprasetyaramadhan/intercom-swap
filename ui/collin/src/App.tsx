@@ -741,9 +741,9 @@ function App() {
   const [offerLines, setOfferLines] = useState<OfferLine[]>(() => [
     { id: `offer-${Date.now()}-0`, btc_sats: 10_000, usdt_amount: '1000000' }, // 1.000000 USDT
   ]);
-  const [offerMaxPlatformFeeBps, setOfferMaxPlatformFeeBps] = useState<number>(50); // 0.5%
-  const [offerMaxTradeFeeBps, setOfferMaxTradeFeeBps] = useState<number>(50); // 0.5%
-  const [offerMaxTotalFeeBps, setOfferMaxTotalFeeBps] = useState<number>(100); // 1.0%
+  const [offerMaxPlatformFeeBps, setOfferMaxPlatformFeeBps] = useState<number>(10); // 0.1%
+  const [offerMaxTradeFeeBps, setOfferMaxTradeFeeBps] = useState<number>(10); // 0.1%
+  const [offerMaxTotalFeeBps, setOfferMaxTotalFeeBps] = useState<number>(20); // 0.2%
   const [offerMinSolRefundWindowSec, setOfferMinSolRefundWindowSec] = useState<number>(72 * 3600);
   const [offerMaxSolRefundWindowSec, setOfferMaxSolRefundWindowSec] = useState<number>(7 * 24 * 3600);
   const [offerValidUntilUnix, setOfferValidUntilUnix] = useState<number>(() => Math.floor(Date.now() / 1000) + 72 * 3600);
@@ -757,9 +757,9 @@ function App() {
   const [rfqLines, setRfqLines] = useState<RfqLine[]>(() => [
     { id: `rfq-${Date.now()}-0`, trade_id: `rfq-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`, btc_sats: 10_000, usdt_amount: '1000000' }, // 1.000000 USDT
   ]);
-  const [rfqMaxPlatformFeeBps, setRfqMaxPlatformFeeBps] = useState<number>(50); // 0.5%
-  const [rfqMaxTradeFeeBps, setRfqMaxTradeFeeBps] = useState<number>(50); // 0.5%
-  const [rfqMaxTotalFeeBps, setRfqMaxTotalFeeBps] = useState<number>(100); // 1.0%
+  const [rfqMaxPlatformFeeBps, setRfqMaxPlatformFeeBps] = useState<number>(10); // 0.1%
+  const [rfqMaxTradeFeeBps, setRfqMaxTradeFeeBps] = useState<number>(10); // 0.1%
+  const [rfqMaxTotalFeeBps, setRfqMaxTotalFeeBps] = useState<number>(20); // 0.2%
   const [rfqMinSolRefundWindowSec, setRfqMinSolRefundWindowSec] = useState<number>(72 * 3600);
   const [rfqMaxSolRefundWindowSec, setRfqMaxSolRefundWindowSec] = useState<number>(7 * 24 * 3600);
   const [rfqValidUntilUnix, setRfqValidUntilUnix] = useState<number>(() => Math.floor(Date.now() / 1000) + 72 * 3600);

@@ -1417,16 +1417,15 @@ export const INTERCOMSWAP_TOOLS = [
     required: ['payment_hash_hex', 'mint'],
   }),
   tool('intercomswap_sol_config_get', 'Get program fee config (platform config PDA).', emptyParams),
-  tool('intercomswap_sol_config_set', 'Set program fee config (admin authority required).', {
+  tool('intercomswap_sol_config_set', 'Set program fee config (admin authority required; platform fee is fixed at 10 bps).', {
     type: 'object',
     additionalProperties: false,
     properties: {
-      fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
       fee_collector: base58Param,
       cu_limit: solCuLimitParam,
       cu_price: solCuPriceParam,
     },
-    required: ['fee_bps', 'fee_collector'],
+    required: ['fee_collector'],
   }),
   tool('intercomswap_sol_fees_withdraw', 'Withdraw accrued platform fees from fee vault (admin authority required).', {
     type: 'object',
@@ -1455,7 +1454,7 @@ export const INTERCOMSWAP_TOOLS = [
   ),
   tool(
     'intercomswap_sol_trade_config_set',
-    'Init/set trade fee config (fee_collector authority required).',
+    'Init/set trade fee config (fee_collector authority required; defaults to 10 bps when omitted).',
     {
       type: 'object',
       additionalProperties: false,
@@ -1465,7 +1464,7 @@ export const INTERCOMSWAP_TOOLS = [
         cu_limit: solCuLimitParam,
         cu_price: solCuPriceParam,
       },
-      required: ['fee_bps', 'fee_collector'],
+      required: ['fee_collector'],
     }
   ),
   tool(

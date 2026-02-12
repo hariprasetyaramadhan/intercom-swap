@@ -189,6 +189,9 @@ function parseLocalRpcPortFromUrls(urls, fallback = 8899) {
 const SOL_REFUND_MIN_SEC = 3600; // 1h
 const SOL_REFUND_MAX_SEC = 7 * 24 * 3600; // 1w
 const SOL_REFUND_DEFAULT_SEC = 72 * 3600; // 72h
+const FIXED_PLATFORM_FEE_BPS = 10; // 0.1%
+const DEFAULT_TRADE_FEE_BPS = 10; // 0.1%
+const DEFAULT_TOTAL_FEE_BPS = FIXED_PLATFORM_FEE_BPS + DEFAULT_TRADE_FEE_BPS; // 0.2%
 const SOL_TX_FEE_BUFFER_LAMPORTS = 50_000;
 const LN_OPEN_TX_FEE_BUFFER_MIN_SATS = 1_000;
 const LN_OPEN_TX_WEIGHT_BUFFER_VB = 600;
@@ -2628,18 +2631,26 @@ export class ToolExecutor {
             }
           }
 
-          // Ensure platform config exists (default 0.5% for local-dev).
+          // Ensure platform config exists (fixed 0.1% for local-dev).
           if (!cfg) {
             await this.execute(
               'intercomswap_sol_config_set',
-              { fee_bps: 50, fee_collector: signerPubkey },
+              { fee_collector: signerPubkey },
+              { autoApprove: true, dryRun: false, secrets }
+            );
+            cfg = await this.execute('intercomswap_sol_config_get', {}, { autoApprove: false, dryRun: false, secrets });
+          } else if (Number(cfg.fee_bps) !== FIXED_PLATFORM_FEE_BPS) {
+            const cfgCollector = String(cfg.fee_collector || '').trim() || signerPubkey;
+            await this.execute(
+              'intercomswap_sol_config_set',
+              { fee_collector: cfgCollector },
               { autoApprove: true, dryRun: false, secrets }
             );
             cfg = await this.execute('intercomswap_sol_config_get', {}, { autoApprove: false, dryRun: false, secrets });
           }
         }
 
-        // Ensure trade config for this signer exists (default 0.5% for local-dev).
+        // Ensure trade config for this signer exists (default 0.1% for local-dev).
         let tcfg = await this.execute(
           'intercomswap_sol_trade_config_get',
           { fee_collector: signerPubkey },
@@ -2655,7 +2666,18 @@ export class ToolExecutor {
           if (!tcfg) {
             await this.execute(
               'intercomswap_sol_trade_config_set',
-              { fee_bps: 50, fee_collector: signerPubkey },
+              { fee_bps: DEFAULT_TRADE_FEE_BPS, fee_collector: signerPubkey },
+              { autoApprove: true, dryRun: false, secrets }
+            );
+            tcfg = await this.execute(
+              'intercomswap_sol_trade_config_get',
+              { fee_collector: signerPubkey },
+              { autoApprove: false, dryRun: false, secrets }
+            );
+          } else if (Number(tcfg.fee_bps) !== DEFAULT_TRADE_FEE_BPS) {
+            await this.execute(
+              'intercomswap_sol_trade_config_set',
+              { fee_bps: DEFAULT_TRADE_FEE_BPS, fee_collector: signerPubkey },
               { autoApprove: true, dryRun: false, secrets }
             );
             tcfg = await this.execute(
@@ -3268,9 +3290,12 @@ export class ToolExecutor {
         'sol_recipient' in args
           ? normalizeBase58(expectString(args, toolName, 'sol_recipient', { min: 32, max: 64 }), 'sol_recipient')
           : null;
-      const maxPlatformFeeBps = expectOptionalInt(args, toolName, 'max_platform_fee_bps', { min: 0, max: 500 }) ?? 500;
-      const maxTradeFeeBps = expectOptionalInt(args, toolName, 'max_trade_fee_bps', { min: 0, max: 1000 }) ?? 1000;
-      const maxTotalFeeBps = expectOptionalInt(args, toolName, 'max_total_fee_bps', { min: 0, max: 1500 }) ?? 1500;
+      const maxPlatformFeeBps =
+        expectOptionalInt(args, toolName, 'max_platform_fee_bps', { min: 0, max: 500 }) ?? FIXED_PLATFORM_FEE_BPS;
+      const maxTradeFeeBps =
+        expectOptionalInt(args, toolName, 'max_trade_fee_bps', { min: 0, max: 1000 }) ?? DEFAULT_TRADE_FEE_BPS;
+      const maxTotalFeeBps =
+        expectOptionalInt(args, toolName, 'max_total_fee_bps', { min: 0, max: 1500 }) ?? DEFAULT_TOTAL_FEE_BPS;
       const minSolRefundWindowSec =
         expectOptionalInt(args, toolName, 'min_sol_refund_window_sec', { min: SOL_REFUND_MIN_SEC, max: SOL_REFUND_MAX_SEC }) ??
         SOL_REFUND_DEFAULT_SEC;
@@ -6842,11 +6867,17 @@ export class ToolExecutor {
 
     // Solana mutations
     if (toolName === 'intercomswap_sol_config_set') {
-      assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector', 'cu_limit', 'cu_price']);
+      assertAllowedKeys(args, toolName, ['fee_collector', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
-      const feeBps = expectInt(args, toolName, 'fee_bps', { min: 0, max: 500 });
       const feeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'fee_collector', { max: 64 }), 'fee_collector'));
-      if (dryRun) return { type: 'dry_run', tool: toolName, fee_bps: feeBps, fee_collector: feeCollector.toBase58() };
+      if (dryRun) {
+        return {
+          type: 'dry_run',
+          tool: toolName,
+          fee_bps: FIXED_PLATFORM_FEE_BPS,
+          fee_collector: feeCollector.toBase58(),
+        };
+      }
 
       const signer = this._requireSolanaSigner();
       const programId = this._programId();
@@ -6861,7 +6892,7 @@ export class ToolExecutor {
               connection,
               authority: signer,
               feeCollector,
-              feeBps,
+              feeBps: FIXED_PLATFORM_FEE_BPS,
               computeUnitLimit,
               computeUnitPriceMicroLamports,
               programId,
@@ -6870,20 +6901,26 @@ export class ToolExecutor {
               connection,
               payer: signer,
               feeCollector,
-              feeBps,
+              feeBps: FIXED_PLATFORM_FEE_BPS,
               computeUnitLimit,
               computeUnitPriceMicroLamports,
               programId,
             });
         const sig = await sendAndConfirm(connection, build.tx, commitment);
-        return { type: current ? 'config_set' : 'config_init', sig, config_pda: build.configPda.toBase58() };
+        return {
+          type: current ? 'config_set' : 'config_init',
+          sig,
+          config_pda: build.configPda.toBase58(),
+          fee_bps: FIXED_PLATFORM_FEE_BPS,
+          fee_collector: feeCollector.toBase58(),
+        };
       }, { label: 'sol_config_set' });
     }
 
     if (toolName === 'intercomswap_sol_trade_config_set') {
       assertAllowedKeys(args, toolName, ['fee_bps', 'fee_collector', 'cu_limit', 'cu_price']);
       requireApproval(toolName, autoApprove);
-      const feeBps = expectInt(args, toolName, 'fee_bps', { min: 0, max: 1000 });
+      const feeBps = expectOptionalInt(args, toolName, 'fee_bps', { min: 0, max: 1000 }) ?? DEFAULT_TRADE_FEE_BPS;
       const feeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'fee_collector', { max: 64 }), 'fee_collector'));
       if (dryRun) return { type: 'dry_run', tool: toolName, fee_bps: feeBps, fee_collector: feeCollector.toBase58() };
 

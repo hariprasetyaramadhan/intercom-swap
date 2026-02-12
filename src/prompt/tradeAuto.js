@@ -1,5 +1,9 @@
 import { hashUnsignedEnvelope } from '../swap/hash.js';
 
+const FIXED_PLATFORM_FEE_BPS = 10; // 0.1%
+const DEFAULT_TRADE_FEE_BPS = 10; // 0.1%
+const DEFAULT_TOTAL_FEE_BPS = FIXED_PLATFORM_FEE_BPS + DEFAULT_TRADE_FEE_BPS; // 0.2%
+
 function isObject(v) {
   return v && typeof v === 'object' && !Array.isArray(v);
 }
@@ -162,9 +166,9 @@ function matchOfferForRfq({ rfqEvt, myOfferEvents }) {
   const rfqUsdt = String(rfqBody.usdt_amount || '').trim();
   if (rfqBtc === null || rfqBtc < 1 || !/^[0-9]+$/.test(rfqUsdt)) return null;
 
-  const rfqMaxPlatform = Math.max(0, Math.min(500, toIntOrNull(rfqBody.max_platform_fee_bps) ?? 500));
-  const rfqMaxTrade = Math.max(0, Math.min(1000, toIntOrNull(rfqBody.max_trade_fee_bps) ?? 1000));
-  const rfqMaxTotal = Math.max(0, Math.min(1500, toIntOrNull(rfqBody.max_total_fee_bps) ?? 1500));
+  const rfqMaxPlatform = Math.max(0, Math.min(500, toIntOrNull(rfqBody.max_platform_fee_bps) ?? FIXED_PLATFORM_FEE_BPS));
+  const rfqMaxTrade = Math.max(0, Math.min(1000, toIntOrNull(rfqBody.max_trade_fee_bps) ?? DEFAULT_TRADE_FEE_BPS));
+  const rfqMaxTotal = Math.max(0, Math.min(1500, toIntOrNull(rfqBody.max_total_fee_bps) ?? DEFAULT_TOTAL_FEE_BPS));
   const rfqMinWin = Math.max(3600, Math.min(7 * 24 * 3600, toIntOrNull(rfqBody.min_sol_refund_window_sec) ?? 3600));
   const rfqMaxWin = Math.max(3600, Math.min(7 * 24 * 3600, toIntOrNull(rfqBody.max_sol_refund_window_sec) ?? 7 * 24 * 3600));
   if (rfqMinWin > rfqMaxWin) return null;
@@ -201,9 +205,9 @@ function matchOfferForRfq({ rfqEvt, myOfferEvents }) {
       if (lineBtc === null || lineBtc < 1 || !/^[0-9]+$/.test(lineUsdt)) continue;
       if (lineBtc !== rfqBtc || lineUsdt !== rfqUsdt) continue;
 
-      const lineMaxPlatform = Math.max(0, Math.min(500, toIntOrNull(line.max_platform_fee_bps) ?? 500));
-      const lineMaxTrade = Math.max(0, Math.min(1000, toIntOrNull(line.max_trade_fee_bps) ?? 1000));
-      const lineMaxTotal = Math.max(0, Math.min(1500, toIntOrNull(line.max_total_fee_bps) ?? 1500));
+      const lineMaxPlatform = Math.max(0, Math.min(500, toIntOrNull(line.max_platform_fee_bps) ?? FIXED_PLATFORM_FEE_BPS));
+      const lineMaxTrade = Math.max(0, Math.min(1000, toIntOrNull(line.max_trade_fee_bps) ?? DEFAULT_TRADE_FEE_BPS));
+      const lineMaxTotal = Math.max(0, Math.min(1500, toIntOrNull(line.max_total_fee_bps) ?? DEFAULT_TOTAL_FEE_BPS));
       if (lineMaxPlatform > rfqMaxPlatform || lineMaxTrade > rfqMaxTrade || lineMaxTotal > rfqMaxTotal) continue;
 
       const lineMinWin = Math.max(3600, Math.min(7 * 24 * 3600, toIntOrNull(line.min_sol_refund_window_sec) ?? 3600));
